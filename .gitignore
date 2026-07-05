@@ -1,0 +1,16 @@
+# 환경변수 (API 키 절대 노출 금지)
+.env
+
+# 가상환경
+venv/
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 생성된 임베딩/결과물 (재생성 가능하므로 제외 권장)
+embeddings.json
+projects/
+
+# Notion onboarding (local only)
+.notion/
