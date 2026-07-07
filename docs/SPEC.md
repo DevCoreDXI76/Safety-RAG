@@ -1,7 +1,7 @@
 # SPEC — 안전서류 AI 초안 생성 시스템 (safety-rag)
 
 > Technical Specification
-> 최종 업데이트: 2026-07-05
+> 최종 업데이트: 2026-07-06
 
 ---
 
@@ -14,10 +14,11 @@
 [검색 쿼리 생성] "{document_type} 작성 관련 {project_info}"
         │
         ▼
-[Voyage AI 임베딩] query embedding 생성
+[임베딩 모델 라우팅] embed_texts(query, input_type="query", model=...)
+   voyage(기본값) / cohere / kure 중 선택
         │
         ▼
-[코사인 유사도 검색] knowledge_base 임베딩(embeddings.json)과 비교, top-5 청크 추출
+[코사인 유사도 검색] embeddings_{model}.json과 비교, top-5 청크 추출
         │
         ▼
 [연동 체크] document_type에 "TBM" 포함 + project_name 존재?
@@ -61,7 +62,9 @@ safety-rag/
 ├── build_knowledge_base.py
 ├── generate_draft.py
 ├── test_search.py
-├── embeddings.json                       ← Git 제외 (재생성 가능)
+├── embeddings_voyage.json                ← Git 제외 (재생성 가능, 프로덕션 사용 모델)
+├── embeddings_cohere.json                ← Git 제외 (Phase 3 비교 실험용)
+├── embeddings_kure.json                  ← Git 제외 (Phase 3 비교 실험용)
 ├── knowledge_base/
 │   ├── 위험성평가_실시규정.txt
 │   ├── TBM_서식.txt
@@ -79,26 +82,31 @@ safety-rag/
 ```
 anthropic
 voyageai
+cohere
+sentence-transformers
 numpy
 python-dotenv
 ```
 
-Phase 3 착수 시 `cohere` 패키지 추가 예정.
+`cohere`, `sentence-transformers`는 Phase 3 임베딩 모델 비교 실험을 위해 추가됨.
+`sentence-transformers`는 KURE-v1 로컬 추론 전용이며, 프로덕션 경로(`generate_draft.py`)는
+Voyage만 사용하므로 최소 설치만 필요하다면 생략 가능.
 
 ## 5. 환경 변수 (`.env`)
 
 ```
 ANTHROPIC_API_KEY=<Claude API 키>
 VOYAGE_API_KEY=<Voyage AI API 키>
+COHERE_API_KEY=<Cohere API 키, Phase 3 비교 실험용>
 ```
 
-Phase 3 착수 시 `COHERE_API_KEY` 추가 예정.
+KURE-v1은 API 키가 필요 없는 로컬 모델(Hugging Face `nlpai-lab/KURE-v1`)이라 환경변수 불필요.
 
 ## 6. 모듈별 스펙
 
 ### 6.1 `common.py`
 
-공통 유틸리티 모듈. 청킹, 임베딩 저장/로드, 유사도 검색을 담당.
+공통 유틸리티 모듈. 청킹, 다중 임베딩 모델 라우팅, 유사도 검색을 담당.
 
 #### `chunk_text(text, max_chunk_size=800) -> list[str]`
 - 문단(`\n\n`) 단위로 분할
@@ -111,23 +119,42 @@ Phase 3 착수 시 `COHERE_API_KEY` 추가 예정.
 - `knowledge_base/` 폴더의 모든 `.txt` 파일을 순회, `chunk_text()`로 분할
 - 반환 형식: `[{"source": 파일명, "text": 청크텍스트}, ...]`
 
-#### `save_embeddings(data)` / `load_embeddings()`
-- `embeddings.json`에 대한 JSON 직렬화/역직렬화 래퍼
+#### 임베딩 모델 분기 (Phase 3에서 추가)
+
+- `EMBEDDING_MODELS = {"voyage": ..., "cohere": ..., "kure": ...}` — 지원 모델과 저장 파일명 매핑
+- `DEFAULT_MODEL = "voyage"` — 명시적으로 모델을 지정하지 않으면 항상 Voyage 사용
+- `embed_with_voyage(texts, input_type)` — Voyage `voyage-3`, `input_type`은 `"document"`/`"query"` 그대로 전달
+- `embed_with_cohere(texts, input_type)` — Cohere `embed-multilingual-v3.0`,
+  `input_type`을 `search_document`/`search_query`로 변환하여 전달
+- `embed_with_kure(texts, input_type)` — 로컬 `sentence-transformers` 모델(`nlpai-lab/KURE-v1`),
+  전역 변수로 지연 로딩(최초 호출 시에만 모델 로드), 공식 권장 프리픽스(`query: `/`passage: `)
+  적용 후 정규화된 임베딩 반환
+- `embed_texts(texts, input_type, model=DEFAULT_MODEL)` — 위 세 함수로 라우팅하는 단일 진입점.
+  `build_knowledge_base.py`, `search_similar_chunks()` 모두 이 함수를 거쳐 모델에 무관하게
+  동일한 인터페이스로 동작
+
+#### `save_embeddings(data, model=DEFAULT_MODEL)` / `load_embeddings(model=DEFAULT_MODEL)`
+- `get_embeddings_filepath(model)`로 결정된 `embeddings_{model}.json`에 대한 JSON
+  직렬화/역직렬화 래퍼. 모델별로 파일이 분리되어 있어 여러 모델의 임베딩 결과를 동시에
+  보관하고 비교할 수 있다.
 
 #### `cosine_similarity(vec_a, vec_b) -> float`
 - numpy 기반 코사인 유사도 계산
 
-#### `search_similar_chunks(query, top_k=5) -> list[dict]`
-- Voyage AI로 쿼리 임베딩 생성 (`input_type="query"`)
-- 저장된 모든 청크와 코사인 유사도 계산 후 상위 `top_k`개 반환
-- `embeddings.json`이 없으면 `FileNotFoundError` 발생
+#### `search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL) -> list[dict]`
+- `embed_texts()`로 쿼리 임베딩 생성 (`input_type="query"`, 모델 지정 가능)
+- 지정 모델의 `embeddings_{model}.json`을 로드하여 저장된 모든 청크와 코사인 유사도 계산 후
+  상위 `top_k`개 반환
+- 해당 모델의 임베딩 파일이 없으면 `FileNotFoundError` 발생 (재빌드 안내 메시지 포함)
 
 ### 6.2 `build_knowledge_base.py`
 
+- CLI 인자 `--model {voyage|cohere|kure}`로 임베딩 모델 선택 (기본값: `voyage`)
 - `load_all_documents()` → 청크 리스트 확보
-- Voyage AI `voyage-3` 모델로 일괄 임베딩 (`input_type="document"`)
-- `save_embeddings()`로 `embeddings.json` 저장
-- **지식베이스 문서를 추가/수정할 때마다 반드시 재실행 필요** (청킹 로직 변경 시에도 동일)
+- `embed_texts(texts, input_type="document", model=...)`로 일괄 임베딩
+- `save_embeddings(data, model=...)`로 `embeddings_{model}.json` 저장
+- **지식베이스 문서를 추가/수정할 때마다, 그리고 청킹 로직을 변경할 때마다, 사용 중인 모든
+  모델에 대해 재실행 필요** (Phase 3에서 3개 모델을 나란히 비교하려면 3번 모두 재실행)
 
 ### 6.3 `generate_draft.py`
 
@@ -166,7 +193,7 @@ Phase 3 착수 시 `COHERE_API_KEY` 추가 예정.
 
 #### `generate_document_draft(document_type, project_info, project_name=None) -> str`
 1. 검색 쿼리 생성: `f"{document_type} 작성 관련 {project_info}"`
-2. `search_similar_chunks(query, top_k=5)` 호출, 결과를 콘솔에 디버그 출력
+2. `search_similar_chunks(query, top_k=5)` 호출 (기본 모델 Voyage 사용), 결과를 콘솔에 디버그 출력
 3. **연동 분기**: `document_type`에 "TBM" 포함 & `project_name` 존재 시
    `load_latest_risk_assessment()` 조회 → 있으면 `linked_risk_context`로 프롬프트에 추가,
    콘솔에 연동 여부 출력
@@ -187,10 +214,12 @@ Phase 3 착수 시 `COHERE_API_KEY` 추가 예정.
 ### 6.4 `test_search.py`
 
 - 검색 품질만 독립적으로 확인하는 반복 입력형 스크립트
+- CLI 인자 `--model {voyage|cohere|kure}`로 비교할 모델 선택 (기본값: `voyage`)
 - 문서 생성 없이 `search_similar_chunks()` 결과(출처, 텍스트 앞부분)만 출력
 - **도입 이유**: `generate_draft.py`는 "문서 종류 + 프로젝트 정보" 2단 입력 구조라, 순수 검색
   품질만 확인하려는 의도로 질의 하나만 입력하면 입력값이 잘못 매칭되는 문제가 실제 발생 →
   검색 전용 테스트 경로 분리
+- Phase 3에서 이 스크립트로 Voyage/Cohere/KURE-v1 3파전 비교 실험 수행
 
 ## 7. 시스템 프롬프트 원문 (생성 규칙)
 
@@ -205,7 +234,9 @@ Phase 3 착수 시 `COHERE_API_KEY` 추가 예정.
 수행해야 합니다'라는 문구를 포함해.
 ```
 
-## 8. 임베딩 모델 스펙 (현재: Phase 1 기준)
+## 8. 임베딩 모델 스펙 (Phase 3 비교 실험 완료)
+
+### 프로덕션 사용 모델
 
 | 항목 | 값 |
 |---|---|
@@ -213,22 +244,46 @@ Phase 3 착수 시 `COHERE_API_KEY` 추가 예정.
 | 모델 | voyage-3 |
 | 문서 임베딩 시 | `input_type="document"` |
 | 쿼리 임베딩 시 | `input_type="query"` |
-| 선택 이유 | Anthropic 공식 추천 파트너, 생태계 일관성, 학습 목적에 충분 |
+| 선택 이유 | Phase 3 비교 실험 결과 Cohere/KURE-v1 대비 유의미한 성능 차이 없음 → Anthropic 생태계 일관성, 추가 API/로컬 호스팅 부담 없음을 근거로 최종 채택 |
 
-Phase 3에서 Cohere embed-multilingual-v3, 한국어 특화 오픈소스(KURE-v1) 대비 비교 실험 예정
-(`PLAN.md` 참조).
+### 비교 실험 대상 (실험용, 프로덕션 미사용)
+
+| 모델 | 제공사 | 임베딩 방식 | 비고 |
+|---|---|---|---|
+| embed-multilingual-v3.0 | Cohere | API, `search_document`/`search_query` | 별도 API 키 필요 |
+| KURE-v1 | nlpai-lab (Hugging Face) | 로컬 추론 (sentence-transformers), `query: `/`passage: ` 프리픽스 | API 키 불필요, 최초 실행 시 약 1.3GB 다운로드 |
+
+### 비교 실험 결론
+- 5개 문서 규모의 지식베이스에서는 3개 모델 간 검색 품질 차이가 통계적으로 유의미하지 않음
+- "관리비 문서 top-5 누락" 경계 케이스가 3개 모델 모두에서 재현됨 → 임베딩 모델이 아니라
+  **문서의 청킹 단위(문단 구조)가 원인**임을 시사
+- 해당 문서의 문단 구조를 항목별로 분리하자 3개 모델 모두 즉시 개선(top-1으로 상승) →
+  가설 검증 완료 (`PLAN.md` Phase 3 섹션 참조)
 
 ## 9. 알려진 한계 및 미해결 이슈
 
 | 이슈 | 상태 |
 |---|---|
-| `산업안전보건관리비_가이드.txt`가 굴착 관련 질의에서 top-5 밖으로 밀림 | 미해결, Phase 3 관찰 대상 |
+| `산업안전보건관리비_가이드.txt`가 굴착 관련 질의에서 top-5 밖으로 밀림 | ✅ 해결 — 문단을 항목별로 분리하여 3개 모델 모두에서 top-1으로 개선 확인 |
 | `document_type` 문자열 포함 매칭 방식의 오탐 가능성 | 인지됨, 별도 개선 미착수 |
 | 다중 위험성평가 기록 시 항상 최신 1건만 참조 (여러 건 종합 불가) | 설계상 의도된 단순화, 필요 시 확장 가능 |
 | 위험성평가 결과가 구조화되지 않고 텍스트 원문 그대로 저장됨 | 설계상 의도된 단순화 (파싱 비용 대비 이득 낮다고 판단) |
 
-## 10. 버전 관리
+## 10. 지식베이스 작성 원칙 (Phase 3 교훈 반영)
 
-- `.gitignore` 제외 대상: `.env`, `venv/`, `__pycache__/`, `*.pyc`, `embeddings.json`, `projects/`
+Phase 3 실험을 통해 확인된, 향후 지식베이스 문서를 추가/수정할 때 지켜야 할 원칙:
+
+- 여러 개별 항목(예: 비용 항목, 위험요인, 체크리스트 등)을 하이픈 나열식으로 한 문단에
+  몰아넣지 않는다 — `chunk_text()`가 문단 단위로 청크를 나누기 때문에, 이렇게 묶으면 특정
+  항목의 핵심 키워드 신호가 다른 항목들에 희석되어 검색에서 누락될 수 있다
+- 검색에서 반드시 잡혀야 하는 핵심 키워드가 있는 항목은 **독립된 문단**으로 분리하고,
+  가능하면 해당 키워드를 문장 안에서 자연스럽게 반복 노출한다
+- 검색 품질 이슈가 발견되면, 임베딩 모델 교체보다 **먼저 문서 구조(청킹 단위)를 의심**한다 —
+  여러 모델에서 동일한 문서가 반복적으로 실패한다면 모델이 아니라 문서 쪽 문제일 가능성이 높다
+
+## 11. 버전 관리
+
+- `.gitignore` 제외 대상: `.env`, `venv/`, `__pycache__/`, `*.pyc`, `embeddings_voyage.json`,
+  `embeddings_cohere.json`, `embeddings_kure.json`, `projects/`
 - **주의**: `.gitignore` 작성 전에 `git add .`를 먼저 실행하면 `venv/`가 스테이징에 남는 문제
   발생 가능 → 이 경우 `git reset`으로 스테이징만 초기화 후 재확인 필요 (실제 발생 및 해결 사례)
