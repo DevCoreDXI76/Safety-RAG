@@ -1,6 +1,4 @@
 anthropic
 voyageai
-cohere
-sentence-transformers
 numpy
 python-dotenv

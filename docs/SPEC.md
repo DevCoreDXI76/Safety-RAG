@@ -1,14 +1,14 @@
 # SPEC — 안전서류 AI 초안 생성 시스템 (safety-rag)
 
 > Technical Specification
-> 최종 업데이트: 2026-07-06
+> 최종 업데이트: 2026-07-07
 
 ---
 
 ## 1. 시스템 아키텍처 개요
 
 ```
-사용자 입력 (문서종류, 프로젝트정보, 현장명)
+사용자 입력 (현장명 → 기록 요약 확인 → 문서종류 메뉴 선택 → 프로젝트정보)
         │
         ▼
 [검색 쿼리 생성] "{document_type} 작성 관련 {project_info}"
@@ -25,9 +25,9 @@
         │                                    │
         │ Yes                                │ No
         ▼                                    ▼
-projects/{현장명}.json에서               검색된 청크만 사용
-최근 위험성평가 기록 조회 후
-컨텍스트에 추가
+같은 현장의 위험성평가 기록이              검색된 청크만 사용
+1건이면 자동 사용, 여러 건이면
+번호로 선택받아 컨텍스트에 추가
         │                                    │
         └──────────────┬─────────────────────┘
                         ▼
@@ -37,7 +37,7 @@ projects/{현장명}.json에서               검색된 청크만 사용
               [초안 텍스트 생성]
                         │
                         ▼
-    project_name 있으면 projects/{현장명}.json에 결과 저장
+    project_name 있으면 projects/{현장명}.json에 결과 저장 (누적)
 ```
 
 ## 2. 개발 환경
@@ -128,7 +128,9 @@ KURE-v1은 API 키가 필요 없는 로컬 모델(Hugging Face `nlpai-lab/KURE-v
   `input_type`을 `search_document`/`search_query`로 변환하여 전달
 - `embed_with_kure(texts, input_type)` — 로컬 `sentence-transformers` 모델(`nlpai-lab/KURE-v1`),
   전역 변수로 지연 로딩(최초 호출 시에만 모델 로드), 공식 권장 프리픽스(`query: `/`passage: `)
-  적용 후 정규화된 임베딩 반환
+  적용 후 정규화된 임베딩 반환. **`sentence_transformers` import 자체도 이 함수 내부에서
+  수행** — 파일 상단에서 import하면 해당 패키지가 설치되어 있지 않을 때 Voyage만 쓰려는
+  상황에서도 전체 스크립트가 `ModuleNotFoundError`로 죽는 문제가 실제로 발생해 수정함
 - `embed_texts(texts, input_type, model=DEFAULT_MODEL)` — 위 세 함수로 라우팅하는 단일 진입점.
   `build_knowledge_base.py`, `search_similar_chunks()` 모두 이 함수를 거쳐 모델에 무관하게
   동일한 인터페이스로 동작
@@ -158,6 +160,24 @@ KURE-v1은 API 키가 필요 없는 로컬 모델(Hugging Face `nlpai-lab/KURE-v
 
 ### 6.3 `generate_draft.py`
 
+#### 문서 종류 선택 (메뉴 방식)
+
+```python
+DOCUMENT_TYPES = {
+    "1": "위험성평가표",
+    "2": "TBM 일지",
+    "3": "안전보건교육일지",
+    "4": "산업안전보건관리비 사용명세서",
+    "5": "표준 작업계획서",
+    "6": "기타 (직접 입력)",
+}
+```
+
+- `choose_document_type()`가 번호 입력을 받아 매칭. `6`을 선택하면 자유 텍스트 입력 허용
+- **도입 이유**: 기존에는 `document_type`을 자유 텍스트로 입력받았는데, 문자열 포함 매칭
+  (`"TBM" in document_type` 등)과 결합되어 질문형 문장을 잘못 입력하면 오동작하는 문제가
+  실제로 발생함. 메뉴 선택으로 바꿔 입력값 자체를 통제함으로써 이 문제를 원천 차단
+
 #### 데이터 저장 구조 (`projects/{project_name}.json`)
 
 ```json
@@ -184,32 +204,41 @@ KURE-v1은 API 키가 필요 없는 로컬 모델(Hugging Face `nlpai-lab/KURE-v
 - 파싱을 하지 않고 생성된 텍스트 원문을 그대로 저장 — 구조화 파싱은 복잡도 대비 이득이 적어
   현재 범위에서 제외
 
-#### `save_project_record(project_name, document_type, project_info, draft)`
-- 기존 파일 있으면 로드 후 append, 없으면 신규 생성
+#### `load_project_data(project_name)` / `save_project_record(...)`
+- 현장별 JSON 파일 로드/저장. 기존 파일 있으면 로드 후 append, 없으면 신규 생성
 
-#### `load_latest_risk_assessment(project_name) -> dict | None`
-- 같은 현장명 기록 중 `document_type`에 "위험성평가"가 포함된 가장 최근 레코드 1건 반환
-- 기록이 없으면 `None`
+#### `show_project_summary(project_name)`
+- CLI 시작 시 현장명을 입력하면 그 현장에 어떤 기록이 몇 건 있는지(문서종류, 생성일시,
+  프로젝트정보 일부) 바로 보여줌
+- **도입 이유**: 기존에는 `projects/` 폴더를 직접 열어보지 않으면 어떤 기록이 있는지 알 방법이
+  없었음
+
+#### `list_risk_assessments(project_name)` / `choose_risk_assessment(project_name)`
+- 같은 현장명의 위험성평가 기록(`document_type`에 "위험성평가" 포함)을 전부 조회
+- 기록이 0건이면 연동 없이 진행, **1건이면 자동 사용**, **2건 이상이면 번호로 선택**하게 함
+  (생성일시 + 프로젝트정보 앞부분을 보여줘 어떤 회차인지 구분 가능), `0` 입력 시 연동 안 함
+- **도입 이유**: 기존에는 항상 "가장 최신 1건"만 자동으로 참조했는데, 한 현장에 서로 다른
+  작업(굴착 작업용, 맨홀 작업용 등) 위험성평가가 여러 건 쌓이면 최신 것이 원하는 회차가
+  아닐 수 있음. 실제 테스트에서 3건 중 의도한 회차(맨홀 접속 작업)를 정확히 골라 TBM에
+  반영되는 것을 확인함
 
 #### `generate_document_draft(document_type, project_info, project_name=None) -> str`
 1. 검색 쿼리 생성: `f"{document_type} 작성 관련 {project_info}"`
 2. `search_similar_chunks(query, top_k=5)` 호출 (기본 모델 Voyage 사용), 결과를 콘솔에 디버그 출력
 3. **연동 분기**: `document_type`에 "TBM" 포함 & `project_name` 존재 시
-   `load_latest_risk_assessment()` 조회 → 있으면 `linked_risk_context`로 프롬프트에 추가,
-   콘솔에 연동 여부 출력
+   `choose_risk_assessment()` 호출 → 선택(또는 자동 선택)된 기록이 있으면
+   `linked_risk_context`로 프롬프트에 추가
 4. system prompt: 참고자료 기반 작성, 실제 위험성평가표 있으면 우선 반영, 추측 금지,
    결과 하단에 법적 고지 문구 강제 포함
 5. Claude API 호출 (`model="claude-sonnet-4-6"`, `max_tokens=4000`)
 6. `project_name` 있으면 결과를 `save_project_record()`로 저장 후 반환
 
-**주의**: `document_type` 매칭이 문자열 포함 여부(`"TBM" in document_type`,
-`"위험성평가" in r["document_type"]`)로 이루어지므로, 사용자가 문서 종류를 자유 텍스트로
-입력하면 오탐/누락 가능성이 있음 (예: "정보통신공사 현장에서 안전 관련해서 뭐부터 준비해야
-해?"처럼 질문형 문장을 `document_type` 자리에 입력하면 의도와 다르게 동작 — 실제 발생 사례
-있음, `test_search.py`로 검색 전용 테스트를 분리해 해결).
-
 #### CLI 흐름 (`__main__`)
-`document_type`, `project_info`, `project_name`(선택) 순으로 입력받아 초안 생성 후 콘솔 출력.
+`project_name`(선택, 입력 시 현장 기록 요약 출력) → `document_type`(메뉴 선택) →
+`project_info`(자유 텍스트) 순으로 입력받아 초안 생성 후 콘솔 출력.
+
+> 이전 버전은 `document_type` → `project_info` → `project_name` 순서였으나, 현장 기록을 먼저
+> 확인하고 문서 종류를 고르는 흐름이 더 자연스러워 현장명을 가장 먼저 입력받도록 순서 변경.
 
 ### 6.4 `test_search.py`
 
@@ -265,8 +294,8 @@ KURE-v1은 API 키가 필요 없는 로컬 모델(Hugging Face `nlpai-lab/KURE-v
 | 이슈 | 상태 |
 |---|---|
 | `산업안전보건관리비_가이드.txt`가 굴착 관련 질의에서 top-5 밖으로 밀림 | ✅ 해결 — 문단을 항목별로 분리하여 3개 모델 모두에서 top-1으로 개선 확인 |
-| `document_type` 문자열 포함 매칭 방식의 오탐 가능성 | 인지됨, 별도 개선 미착수 |
-| 다중 위험성평가 기록 시 항상 최신 1건만 참조 (여러 건 종합 불가) | 설계상 의도된 단순화, 필요 시 확장 가능 |
+| `document_type` 문자열 포함 매칭 방식의 오탐 가능성 | ✅ 해결 — 자유 텍스트 입력을 번호 선택 메뉴로 교체하여 오입력 자체를 차단 |
+| 다중 위험성평가 기록 시 항상 최신 1건만 참조 (여러 건 종합 불가) | ✅ 해결 — `choose_risk_assessment()`로 2건 이상일 때 번호로 선택 가능하도록 개선, 실제 3건 중 의도한 회차 선택 테스트 완료 |
 | 위험성평가 결과가 구조화되지 않고 텍스트 원문 그대로 저장됨 | 설계상 의도된 단순화 (파싱 비용 대비 이득 낮다고 판단) |
 
 ## 10. 지식베이스 작성 원칙 (Phase 3 교훈 반영)

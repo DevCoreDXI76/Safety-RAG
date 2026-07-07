@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 import voyageai
 import cohere
 from anthropic import Anthropic
-from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
@@ -33,6 +32,7 @@ _kure_model = None
 def get_kure_model():
     global _kure_model
     if _kure_model is None:
+        from sentence_transformers import SentenceTransformer  # 여기로 이동
         print("KURE-v1 모델 로딩 중... (최초 1회, 다소 시간 소요)")
         _kure_model = SentenceTransformer("nlpai-lab/KURE-v1")
     return _kure_model

@@ -1,7 +1,8 @@
 """
 안전서류 초안 생성 스크립트
+- 문서 종류를 메뉴에서 선택 (자유 텍스트 오입력 문제 차단)
 - 위험성평가표 생성 시 projects/{현장명}.json에 결과 저장
-- TBM 일지 생성 시, 같은 현장명의 위험성평가 기록이 있으면 그 내용을 직접 컨텍스트로 사용
+- TBM 일지 생성 시, 같은 현장명에 여러 위험성평가 기록이 있으면 선택 가능
 """
 
 import os
@@ -11,48 +12,107 @@ from common import search_similar_chunks, claude_client
 
 PROJECTS_DIR = "projects"
 
+DOCUMENT_TYPES = {
+    "1": "위험성평가표",
+    "2": "TBM 일지",
+    "3": "안전보건교육일지",
+    "4": "산업안전보건관리비 사용명세서",
+    "5": "표준 작업계획서",
+    "6": "기타 (직접 입력)",
+}
+
 
 def ensure_projects_dir():
     if not os.path.exists(PROJECTS_DIR):
         os.makedirs(PROJECTS_DIR)
 
 
+def choose_document_type():
+    print("생성할 문서 종류를 선택하세요:")
+    for key, label in DOCUMENT_TYPES.items():
+        print(f"  {key}. {label}")
+    while True:
+        choice = input("번호 입력: ").strip()
+        if choice in DOCUMENT_TYPES:
+            if choice == "6":
+                custom = input("문서 종류를 직접 입력하세요: ").strip()
+                return custom if custom else "기타 문서"
+            return DOCUMENT_TYPES[choice]
+        print("잘못된 입력입니다. 목록에 있는 번호를 입력하세요.")
+
+
+def load_project_data(project_name):
+    filepath = os.path.join(PROJECTS_DIR, f"{project_name}.json")
+    if not os.path.exists(filepath):
+        return None
+    with open(filepath, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def save_project_record(project_name, document_type, project_info, draft):
-    """현장명 기준으로 최근 생성 기록을 저장. 같은 현장명이면 문서 종류별로 누적."""
     ensure_projects_dir()
     filepath = os.path.join(PROJECTS_DIR, f"{project_name}.json")
-
-    if os.path.exists(filepath):
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    else:
-        data = {"project_name": project_name, "records": []}
-
+    data = load_project_data(project_name) or {"project_name": project_name, "records": []}
     data["records"].append({
         "document_type": document_type,
         "project_info": project_info,
         "draft": draft,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
-
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def load_latest_risk_assessment(project_name):
-    """같은 현장명의 가장 최근 위험성평가표 기록을 찾아 반환. 없으면 None."""
-    filepath = os.path.join(PROJECTS_DIR, f"{project_name}.json")
-    if not os.path.exists(filepath):
+def list_risk_assessments(project_name):
+    """같은 현장명의 위험성평가표 기록을 전부 반환 (오래된 순)"""
+    data = load_project_data(project_name)
+    if data is None:
+        return []
+    return [r for r in data["records"] if "위험성평가" in r["document_type"]]
+
+
+def choose_risk_assessment(project_name):
+    """
+    같은 현장의 위험성평가 기록이 여러 건이면 선택하게 하고,
+    1건이면 자동 사용, 0건이면 None 반환.
+    """
+    records = list_risk_assessments(project_name)
+    if not records:
+        print(f"[연동] '{project_name}' 현장의 위험성평가 기록을 찾지 못했습니다. "
+              f"일반 지식베이스만 참고합니다.\n")
         return None
 
-    with open(filepath, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    if len(records) == 1:
+        print(f"[연동] '{project_name}' 현장의 기존 위험성평가표를 참조합니다 "
+              f"(생성일: {records[0]['created_at']})\n")
+        return records[0]
 
-    risk_records = [r for r in data["records"] if "위험성평가" in r["document_type"]]
-    if not risk_records:
-        return None
+    print(f"\n[연동] '{project_name}' 현장에 위험성평가 기록이 {len(records)}건 있습니다. "
+          f"참조할 기록을 선택하세요:")
+    for i, r in enumerate(records, 1):
+        preview = r["project_info"][:40]
+        print(f"  {i}. {r['created_at']} - {preview}...")
+    print(f"  0. 참조하지 않음")
 
-    return risk_records[-1]  # 가장 최근 기록
+    while True:
+        choice = input("번호 입력: ").strip()
+        if choice == "0":
+            return None
+        if choice.isdigit() and 1 <= int(choice) <= len(records):
+            return records[int(choice) - 1]
+        print("잘못된 입력입니다.")
+
+
+def show_project_summary(project_name):
+    """현장 기록 조회 - 어떤 문서가 몇 건 있는지 요약 출력"""
+    data = load_project_data(project_name)
+    if data is None:
+        print(f"'{project_name}' 현장의 기록이 없습니다. 새로 시작합니다.\n")
+        return
+    print(f"\n[{project_name} 현장 기록 — 총 {len(data['records'])}건]")
+    for r in data["records"]:
+        print(f"  - {r['created_at']} | {r['document_type']} | {r['project_info'][:40]}...")
+    print()
 
 
 def generate_document_draft(document_type, project_info, project_name=None):
@@ -69,20 +129,14 @@ def generate_document_draft(document_type, project_info, project_name=None):
         f"[출처: {c['source']}]\n{c['text']}" for c in relevant_chunks
     )
 
-    # TBM 일지를 생성하는 경우, 같은 현장의 실제 위험성평가 기록이 있으면 함께 참조
     linked_risk_context = ""
     if "TBM" in document_type and project_name:
-        risk_record = load_latest_risk_assessment(project_name)
+        risk_record = choose_risk_assessment(project_name)
         if risk_record:
-            print(f"[연동] '{project_name}' 현장의 기존 위험성평가표를 참조합니다 "
-                  f"(생성일: {risk_record['created_at']})\n")
             linked_risk_context = (
                 f"\n\n---\n\n[이 현장에서 실제로 작성된 위험성평가표 — 이 내용을 우선 근거로 사용할 것]\n"
                 f"{risk_record['draft']}"
             )
-        else:
-            print(f"[연동] '{project_name}' 현장의 위험성평가 기록을 찾지 못했습니다. "
-                  f"일반 지식베이스만 참고합니다.\n")
 
     system_prompt = (
         "너는 정보통신공사 현장의 안전서류 작성을 돕는 보조 도구야. "
@@ -118,9 +172,14 @@ def generate_document_draft(document_type, project_info, project_name=None):
 
 if __name__ == "__main__":
     print("=== 안전서류 초안 생성기 (MVP) ===\n")
-    document_type = input("문서 종류 (예: 위험성평가표 / TBM 일지): ").strip()
-    project_info = input("프로젝트/작업 정보를 입력하세요: ").strip()
+
     project_name = input("현장명을 입력하세요 (연동 저장용, 생략하려면 엔터): ").strip() or None
+
+    if project_name:
+        show_project_summary(project_name)
+
+    document_type = choose_document_type()
+    project_info = input("프로젝트/작업 정보를 입력하세요: ").strip()
 
     print("\n초안 생성 중...\n")
     draft = generate_document_draft(document_type, project_info, project_name)
