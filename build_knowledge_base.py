@@ -1,27 +1,46 @@
 """
-지식 베이스 구축 스크립트
-knowledge_base 폴더의 모든 문서를 청크로 쪼개고 임베딩해서 embeddings.json에 저장
-문서를 추가/수정할 때마다 다시 실행하면 됩니다.
+지식베이스 문서를 청킹하고 임베딩하여 저장하는 스크립트.
+--model 인자로 임베딩 모델을 선택할 수 있다 (기본값: voyage).
+
+사용 예:
+  python build_knowledge_base.py              → voyage로 빌드
+  python build_knowledge_base.py --model cohere → cohere로 빌드
 """
 
-from common import load_all_documents, save_embeddings, voyage_client
+import sys
+from common import load_all_documents, embed_texts, save_embeddings, EMBEDDING_MODELS, DEFAULT_MODEL
 
-print("문서 로딩 중...")
-chunks = load_all_documents()
-print(f"총 {len(chunks)}개의 청크를 찾았습니다.")
 
-if len(chunks) == 0:
-    print("[경고] knowledge_base 폴더에 .txt 파일이 없습니다. 먼저 파일을 넣어주세요.")
-    exit(1)
+def parse_model_arg():
+    if "--model" in sys.argv:
+        idx = sys.argv.index("--model")
+        if idx + 1 < len(sys.argv):
+            return sys.argv[idx + 1]
+    return DEFAULT_MODEL
 
-print("임베딩 생성 중... (Voyage AI 호출)")
-texts = [c["text"] for c in chunks]
 
-# Voyage API는 한 번에 여러 텍스트를 배치로 처리 가능
-result = voyage_client.embed(texts, model="voyage-3", input_type="document")
+if __name__ == "__main__":
+    model = parse_model_arg()
+    if model not in EMBEDDING_MODELS:
+        print(f"지원하지 않는 모델입니다: {model}. 지원 모델: {list(EMBEDDING_MODELS.keys())}")
+        sys.exit(1)
 
-for chunk, embedding in zip(chunks, result.embeddings):
-    chunk["embedding"] = embedding
+    print(f"=== 지식베이스 빌드 (모델: {model}) ===\n")
 
-save_embeddings(chunks)
-print(f"완료! embeddings.json에 {len(chunks)}개 청크의 임베딩을 저장했습니다.")
+    chunks = load_all_documents()
+    print(f"총 {len(chunks)}개 청크 로드 완료")
+
+    texts = [c["text"] for c in chunks]
+    print("임베딩 생성 중...")
+    embeddings = embed_texts(texts, input_type="document", model=model)
+
+    data = []
+    for chunk, embedding in zip(chunks, embeddings):
+        data.append({
+            "source": chunk["source"],
+            "text": chunk["text"],
+            "embedding": embedding,
+        })
+
+    save_embeddings(data, model=model)
+    print(f"\n완료: {EMBEDDING_MODELS[model]}에 {len(data)}개 청크 임베딩 저장됨")
