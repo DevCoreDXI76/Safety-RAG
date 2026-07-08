@@ -139,14 +139,7 @@ def show_project_summary(project_name):
         print(f"  - {r['created_at']} | {r['document_type']} | {r['project_info'][:40]}...")
     print()
 
-
 def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None):
-    """
-    문서 초안 생성 핵심 로직. CLI와 API 양쪽에서 공유한다.
-
-    risk_assessment_record: TBM 생성 시 연동할 위험성평가 기록(dict). 이미 선택된
-    상태로 전달받는다 — 이 함수 내부에서는 더 이상 대화형으로 고르지 않는다.
-    """
     query = f"{document_type} 작성 관련 {project_info}"
     relevant_chunks = search_similar_chunks(query, top_k=5)
 
@@ -167,17 +160,22 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
             f"{risk_assessment_record['draft']}"
         )
 
+    # 현장명이 있으면 문서 내용에 실제로 반영되도록 명시적으로 전달
+    site_line = f"현장명: {project_name}\n" if project_name else ""
+
     system_prompt = (
         "너는 정보통신공사 현장의 안전서류 작성을 돕는 보조 도구야. "
         "제공된 참고 자료(법령, 표준 서식, 그리고 있다면 이 현장의 실제 위험성평가표)를 "
         "근거로 문서 초안을 작성해. "
         "만약 실제 위험성평가표가 함께 제공되었다면, 일반 가이드보다 그 내용을 우선적으로 반영해. "
+        "현장명이 제공되었다면 문서의 현장명 항목에 반드시 그 값을 채워 넣어. "
         "참고 자료에 없는 내용은 추측해서 만들어내지 말고, "
         "실제 서류처럼 항목과 형식을 갖춰서 작성해. "
         "마지막에 반드시 '※ 이 초안은 참고용이며, 최종 검토 및 승인은 안전관리자가 직접 수행해야 합니다'라는 문구를 포함해."
     )
 
     user_prompt = (
+        f"{site_line}"
         f"다음은 {document_type} 작성에 참고할 자료입니다:\n\n{context}"
         f"{linked_risk_context}\n\n"
         f"---\n\n"
@@ -198,7 +196,6 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
         saved_record = save_project_record(project_name, document_type, project_info, draft)
 
     return draft, saved_record
-
 
 if __name__ == "__main__":
     print("=== 안전서류 초안 생성기 (MVP) ===\n")
