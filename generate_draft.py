@@ -1,12 +1,15 @@
 """
-안전서류 초안 생성 스크립트
+안전서류 초안 생성 스크립트 (CLI)
 - 문서 종류를 메뉴에서 선택 (자유 텍스트 오입력 문제 차단)
 - 위험성평가표 생성 시 projects/{현장명}.json에 결과 저장
 - TBM 일지 생성 시, 같은 현장명에 여러 위험성평가 기록이 있으면 선택 가능
+
+핵심 로직(generate_document_draft 등)은 api/routes.py에서도 그대로 재사용된다.
 """
 
 import os
 import json
+import uuid
 from datetime import datetime
 from common import search_similar_chunks, claude_client
 
@@ -28,6 +31,7 @@ def ensure_projects_dir():
 
 
 def choose_document_type():
+    """CLI 전용: 번호 입력을 받아 문서종류 문자열로 변환"""
     print("생성할 문서 종류를 선택하세요:")
     for key, label in DOCUMENT_TYPES.items():
         print(f"  {key}. {label}")
@@ -42,6 +46,7 @@ def choose_document_type():
 
 
 def load_project_data(project_name):
+    """현장 JSON 파일 로드. 없으면 None."""
     filepath = os.path.join(PROJECTS_DIR, f"{project_name}.json")
     if not os.path.exists(filepath):
         return None
@@ -50,30 +55,50 @@ def load_project_data(project_name):
 
 
 def save_project_record(project_name, document_type, project_info, draft):
+    """현장 기록을 저장하고, 저장된 레코드(id 포함)를 반환한다."""
     ensure_projects_dir()
     filepath = os.path.join(PROJECTS_DIR, f"{project_name}.json")
     data = load_project_data(project_name) or {"project_name": project_name, "records": []}
-    data["records"].append({
+
+    record = {
+        "id": uuid.uuid4().hex[:12],
         "document_type": document_type,
         "project_info": project_info,
         "draft": draft,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    })
+    }
+    data["records"].append(record)
+
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return record
+
+
+def list_project_records(project_name):
+    """현장의 전체 기록 목록 반환 (없으면 빈 리스트)"""
+    data = load_project_data(project_name)
+    if data is None:
+        return []
+    return data["records"]
 
 
 def list_risk_assessments(project_name):
     """같은 현장명의 위험성평가표 기록을 전부 반환 (오래된 순)"""
-    data = load_project_data(project_name)
-    if data is None:
-        return []
-    return [r for r in data["records"] if "위험성평가" in r["document_type"]]
+    return [r for r in list_project_records(project_name) if "위험성평가" in r["document_type"]]
+
+
+def get_record_by_id(project_name, record_id):
+    """id로 특정 기록 하나를 찾는다. 없으면 None."""
+    for r in list_project_records(project_name):
+        if r.get("id") == record_id:
+            return r
+    return None
 
 
 def choose_risk_assessment(project_name):
     """
-    같은 현장의 위험성평가 기록이 여러 건이면 선택하게 하고,
+    CLI 전용: 같은 현장의 위험성평가 기록이 여러 건이면 선택하게 하고,
     1건이면 자동 사용, 0건이면 None 반환.
     """
     records = list_risk_assessments(project_name)
@@ -104,18 +129,24 @@ def choose_risk_assessment(project_name):
 
 
 def show_project_summary(project_name):
-    """현장 기록 조회 - 어떤 문서가 몇 건 있는지 요약 출력"""
-    data = load_project_data(project_name)
-    if data is None:
+    """CLI 전용: 현장 기록 조회 - 어떤 문서가 몇 건 있는지 요약 출력"""
+    records = list_project_records(project_name)
+    if not records:
         print(f"'{project_name}' 현장의 기록이 없습니다. 새로 시작합니다.\n")
         return
-    print(f"\n[{project_name} 현장 기록 — 총 {len(data['records'])}건]")
-    for r in data["records"]:
+    print(f"\n[{project_name} 현장 기록 — 총 {len(records)}건]")
+    for r in records:
         print(f"  - {r['created_at']} | {r['document_type']} | {r['project_info'][:40]}...")
     print()
 
 
-def generate_document_draft(document_type, project_info, project_name=None):
+def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None):
+    """
+    문서 초안 생성 핵심 로직. CLI와 API 양쪽에서 공유한다.
+
+    risk_assessment_record: TBM 생성 시 연동할 위험성평가 기록(dict). 이미 선택된
+    상태로 전달받는다 — 이 함수 내부에서는 더 이상 대화형으로 고르지 않는다.
+    """
     query = f"{document_type} 작성 관련 {project_info}"
     relevant_chunks = search_similar_chunks(query, top_k=5)
 
@@ -130,13 +161,11 @@ def generate_document_draft(document_type, project_info, project_name=None):
     )
 
     linked_risk_context = ""
-    if "TBM" in document_type and project_name:
-        risk_record = choose_risk_assessment(project_name)
-        if risk_record:
-            linked_risk_context = (
-                f"\n\n---\n\n[이 현장에서 실제로 작성된 위험성평가표 — 이 내용을 우선 근거로 사용할 것]\n"
-                f"{risk_record['draft']}"
-            )
+    if risk_assessment_record:
+        linked_risk_context = (
+            f"\n\n---\n\n[이 현장에서 실제로 작성된 위험성평가표 — 이 내용을 우선 근거로 사용할 것]\n"
+            f"{risk_assessment_record['draft']}"
+        )
 
     system_prompt = (
         "너는 정보통신공사 현장의 안전서류 작성을 돕는 보조 도구야. "
@@ -164,10 +193,11 @@ def generate_document_draft(document_type, project_info, project_name=None):
 
     draft = response.content[0].text.strip()
 
+    saved_record = None
     if project_name:
-        save_project_record(project_name, document_type, project_info, draft)
+        saved_record = save_project_record(project_name, document_type, project_info, draft)
 
-    return draft
+    return draft, saved_record
 
 
 if __name__ == "__main__":
@@ -181,8 +211,12 @@ if __name__ == "__main__":
     document_type = choose_document_type()
     project_info = input("프로젝트/작업 정보를 입력하세요: ").strip()
 
+    risk_record = None
+    if "TBM" in document_type and project_name:
+        risk_record = choose_risk_assessment(project_name)
+
     print("\n초안 생성 중...\n")
-    draft = generate_document_draft(document_type, project_info, project_name)
+    draft, _ = generate_document_draft(document_type, project_info, project_name, risk_record)
 
     print("=" * 50)
     print(draft)

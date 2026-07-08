@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>안전서류 초안 생성기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;700&family=Noto+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #EEF1F0;
+    --surface: #FFFFFF;
+    --ink: #1B2A32;
+    --ink-soft: #5B6B72;
+    --ink-faint: #93A0A5;
+    --line: #D7DEDC;
+    --accent: #2E6F8E;
+    --accent-soft: #E3ECEF;
+    --risk-high: #C94A3E;
+    --risk-midhigh: #DB8536;
+    --risk-mid: #D9AA3B;
+    --risk-low: #3E8F5D;
+    --radius: 10px;
+    --font-display: 'Noto Serif KR', serif;
+    --font-body: 'Noto Sans KR', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 48px;
+  }
+
+  .app-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--ink);
+    color: #fff;
+    padding: 18px 20px 16px;
+    border-bottom: 3px solid var(--accent);
+  }
+  .app-bar .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: #9FB6C1;
+    text-transform: uppercase;
+  }
+  .app-bar h1 {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 700;
+    margin: 4px 0 0;
+  }
+
+  main {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 20px 16px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 18px 18px 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0 0 4px;
+  }
+  .card .hint {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin: 0 0 14px;
+    line-height: 1.5;
+  }
+
+  label.field-label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    margin-bottom: 6px;
+  }
+
+  input[type="text"], textarea {
+    width: 100%;
+    font-family: var(--font-body);
+    font-size: 14.5px;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    outline: none;
+  }
+  input[type="text"]:focus, textarea:focus {
+    border-color: var(--accent);
+  }
+  textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; }
+
+  button {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: 14px;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+  button:active { opacity: 0.75; }
+  button:disabled { opacity: 0.45; cursor: default; }
+
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-secondary { background: var(--accent-soft); color: var(--accent); }
+  .btn-generate {
+    width: 100%;
+    background: var(--ink);
+    color: #fff;
+    padding: 13px 16px;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+  }
+
+  /* 현장 기록 목록 — 공문서 대장(臺帳) 스타일 */
+  .ledger { margin-top: 14px; border-top: 1px dashed var(--line); }
+  .ledger-empty {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    padding: 12px 0 2px;
+  }
+  .ledger-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 9px 0;
+    border-bottom: 1px dashed var(--line);
+    font-size: 12.5px;
+  }
+  .ledger-row .doc-badge {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .ledger-row .doc-info { flex: 1; min-width: 0; }
+  .ledger-row .doc-type { font-weight: 700; }
+  .ledger-row .doc-preview {
+    color: var(--ink-soft);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ledger-row .doc-time {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
+
+  /* 문서종류 선택 카드 */
+  .type-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .type-card {
+    border: 1px solid var(--line);
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 11px 10px;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    color: var(--ink);
+  }
+  .type-card.selected {
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+  }
+
+  /* 위험성평가 회차 선택 */
+  .risk-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .risk-option.selected { border-color: var(--accent); background: var(--accent-soft); }
+  .risk-option input { margin: 0; }
+  .risk-option .r-meta { flex: 1; min-width: 0; }
+  .risk-option .r-time { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faint); }
+  .risk-option .r-preview {
+    font-size: 12.5px; color: var(--ink-soft);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* 결과 영역 */
+  #result-section { display: none; }
+  .result-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    border-bottom: 1px dashed var(--line);
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+  .result-body {
+    font-size: 13.5px;
+    line-height: 1.7;
+  }
+  .result-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 12.5px;
+  }
+  .result-body th, .result-body td {
+    border: 1px solid var(--line);
+    padding: 6px 8px;
+    text-align: left;
+  }
+  .result-body th { background: var(--bg); }
+  .result-body h1, .result-body h2, .result-body h3 {
+    font-family: var(--font-display);
+  }
+  .result-body blockquote {
+    border-left: 3px solid var(--risk-mid);
+    background: var(--bg);
+    margin: 10px 0;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+
+  .status-line {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 0;
+  }
+  .spinner {
+    width: 13px; height: 13px;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-box {
+    background: #FBEAE8;
+    border: 1px solid var(--risk-high);
+    color: #8C2E24;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    margin-top: 10px;
+  }
+
+  .footnote {
+    text-align: center;
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 24px;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<div class="app-bar">
+  <div class="eyebrow">SAFETY-RAG · MVP</div>
+  <h1>안전서류 초안 생성기</h1>
+</div>
+
+<main>
+
+  <!-- 1. 현장 -->
+  <section class="card">
+    <h2>현장</h2>
+    <p class="hint">현장명을 입력하면 이 현장에 이미 만들어둔 기록을 확인할 수 있습니다.</p>
+    <label class="field-label" for="project-name">현장명</label>
+    <div class="row">
+      <input type="text" id="project-name" placeholder="예: 강남지사_광케이블" />
+      <button class="btn-secondary" id="btn-lookup">조회</button>
+    </div>
+    <div class="ledger" id="ledger"></div>
+  </section>
+
+  <!-- 2. 문서 종류 -->
+  <section class="card">
+    <h2>문서 종류</h2>
+    <p class="hint">생성할 문서를 선택하세요.</p>
+    <div class="type-grid" id="type-grid">
+      <div class="status-line"><span class="spinner"></span> 불러오는 중...</div>
+    </div>
+  </section>
+
+  <!-- 3. 위험성평가 연동 (TBM 선택 시에만 노출) -->
+  <section class="card" id="risk-section" style="display:none;">
+    <h2>위험성평가 연동</h2>
+    <p class="hint">이 현장의 위험성평가표 중 오늘 TBM에 반영할 회차를 선택하세요.</p>
+    <div id="risk-list"></div>
+  </section>
+
+  <!-- 4. 작업 정보 -->
+  <section class="card">
+    <h2>작업 정보</h2>
+    <p class="hint">공종, 세부 작업, 투입 인원 등을 구체적으로 적을수록 초안 품질이 좋아집니다.</p>
+    <label class="field-label" for="project-info">프로젝트 / 작업 정보</label>
+    <textarea id="project-info" placeholder="예: 정보통신공사, 광케이블 지중 매설 작업, 인원 5명, 굴착 작업 포함"></textarea>
+  </section>
+
+  <button class="btn-generate" id="btn-generate">초안 생성</button>
+  <div class="status-line" id="generate-status"></div>
+  <div class="error-box" id="error-box" style="display:none;"></div>
+
+  <!-- 5. 결과 -->
+  <section class="card" id="result-section">
+    <h2>생성 결과</h2>
+    <div class="result-meta">
+      <span id="meta-record-id">record: —</span>
+      <button class="btn-secondary" id="btn-copy" style="padding:5px 10px; font-size:11.5px;">복사</button>
+    </div>
+    <div class="result-body" id="result-body"></div>
+  </section>
+
+</main>
+
+<div class="footnote">
+  이 도구가 생성한 문서는 참고용 초안이며,<br />최종 검토·승인은 안전관리자가 직접 수행해야 합니다.
+</div>
+
+<script>
+  // 로컬 테스트용. Railway 등에 배포한 뒤에는 실제 API 도메인으로 교체할 것.
+  const API_BASE = "http://127.0.0.1:8000";
+
+  const state = {
+    documentTypes: [],
+    selectedTypeId: null,
+    selectedTypeLabel: null,
+    riskAssessments: [],
+    selectedRiskId: null,
+    projectRecords: [],
+  };
+
+  const $ = (id) => document.getElementById(id);
+
+  function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  // ---- 1. 문서종류 목록 로드 ----
+  async function loadDocumentTypes() {
+    try {
+      const res = await fetch(`${API_BASE}/document-types`);
+      const data = await res.json();
+      state.documentTypes = data.document_types;
+      renderTypeGrid();
+    } catch (e) {
+      $("type-grid").innerHTML = `<div class="error-box">문서종류를 불러오지 못했습니다. 백엔드(FastAPI)가 실행 중인지 확인하세요.</div>`;
+    }
+  }
+
+  function renderTypeGrid() {
+    $("type-grid").innerHTML = state.documentTypes
+      .filter((t) => t.id !== "6") // "기타"는 MVP 범위에서 일단 제외
+      .map((t) => `
+        <button class="type-card" data-id="${t.id}" data-label="${escapeHtml(t.label)}">
+          ${escapeHtml(t.label)}
+        </button>
+      `).join("");
+
+    document.querySelectorAll(".type-card").forEach((btn) => {
+      btn.addEventListener("click", () => selectDocumentType(btn.dataset.id, btn.dataset.label));
+    });
+  }
+
+  function selectDocumentType(id, label) {
+    state.selectedTypeId = id;
+    state.selectedTypeLabel = label;
+    document.querySelectorAll(".type-card").forEach((btn) => {
+      btn.classList.toggle("selected", btn.dataset.id === id);
+    });
+
+    const isTBM = label.includes("TBM");
+    $("risk-section").style.display = isTBM ? "block" : "none";
+    if (isTBM) loadRiskAssessments();
+  }
+
+  // ---- 2. 현장 기록 조회 ----
+  async function lookupProject() {
+    const name = $("project-name").value.trim();
+    if (!name) return;
+
+    $("ledger").innerHTML = `<div class="status-line"><span class="spinner"></span> 조회 중...</div>`;
+    try {
+      const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`);
+      const data = await res.json();
+      state.projectRecords = data.records || [];
+      renderLedger();
+
+      // TBM이 선택되어 있는 상태였다면 위험성평가 목록도 갱신
+      if (state.selectedTypeLabel && state.selectedTypeLabel.includes("TBM")) {
+        loadRiskAssessments();
+      }
+    } catch (e) {
+      $("ledger").innerHTML = `<div class="error-box">현장 기록을 불러오지 못했습니다.</div>`;
+    }
+  }
+
+  function renderLedger() {
+    if (state.projectRecords.length === 0) {
+      $("ledger").innerHTML = `<div class="ledger-empty">이 현장의 기록이 없습니다. 새로 시작합니다.</div>`;
+      return;
+    }
+    $("ledger").innerHTML = state.projectRecords.map((r) => `
+      <div class="ledger-row">
+        <span class="doc-badge">${escapeHtml(r.document_type)}</span>
+        <div class="doc-info">
+          <div class="doc-preview">${escapeHtml(r.project_info || "")}</div>
+        </div>
+        <span class="doc-time">${escapeHtml(r.created_at)}</span>
+      </div>
+    `).join("");
+  }
+
+  // ---- 3. 위험성평가 회차 목록 ----
+  async function loadRiskAssessments() {
+    const name = $("project-name").value.trim();
+    if (!name) {
+      $("risk-list").innerHTML = `<div class="ledger-empty">먼저 현장명을 입력하고 조회하세요.</div>`;
+      return;
+    }
+    $("risk-list").innerHTML = `<div class="status-line"><span class="spinner"></span> 불러오는 중...</div>`;
+    try {
+      const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/risk-assessments`);
+      const data = await res.json();
+      state.riskAssessments = data.risk_assessments || [];
+      renderRiskList();
+    } catch (e) {
+      $("risk-list").innerHTML = `<div class="error-box">위험성평가 기록을 불러오지 못했습니다.</div>`;
+    }
+  }
+
+  function renderRiskList() {
+    if (state.riskAssessments.length === 0) {
+      $("risk-list").innerHTML = `<div class="ledger-empty">이 현장에 위험성평가 기록이 없습니다. 연동 없이 생성됩니다.</div>`;
+      state.selectedRiskId = null;
+      return;
+    }
+    $("risk-list").innerHTML = state.riskAssessments.map((r) => `
+      <label class="risk-option" data-id="${r.id || ""}">
+        <input type="radio" name="risk" value="${r.id || ""}" />
+        <div class="r-meta">
+          <div class="r-preview">${escapeHtml(r.project_info || "")}</div>
+          <div class="r-time">${escapeHtml(r.created_at)}</div>
+        </div>
+      </label>
+    `).join("");
+
+    document.querySelectorAll(".risk-option").forEach((el) => {
+      el.addEventListener("click", () => {
+        document.querySelectorAll(".risk-option").forEach((o) => o.classList.remove("selected"));
+        el.classList.add("selected");
+        el.querySelector("input").checked = true;
+        state.selectedRiskId = el.dataset.id || null;
+      });
+    });
+
+    // 기본값: 가장 최근 회차 자동 선택
+    const last = document.querySelector(".risk-option:last-child");
+    if (last) last.click();
+  }
+
+  // ---- 4. 생성 ----
+  async function generateDraft() {
+    const projectName = $("project-name").value.trim() || null;
+    const projectInfo = $("project-info").value.trim();
+
+    $("error-box").style.display = "none";
+
+    if (!state.selectedTypeLabel) {
+      showError("문서 종류를 선택하세요.");
+      return;
+    }
+    if (!projectInfo) {
+      showError("작업 정보를 입력하세요.");
+      return;
+    }
+
+    $("btn-generate").disabled = true;
+    $("generate-status").innerHTML = `<span class="spinner"></span> 초안 생성 중... (최대 30초 정도 걸릴 수 있습니다)`;
+    $("result-section").style.display = "none";
+
+    const payload = {
+      document_type: state.selectedTypeLabel,
+      project_info: projectInfo,
+      project_name: projectName,
+      risk_assessment_id: state.selectedTypeLabel.includes("TBM") ? state.selectedRiskId : null,
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "생성에 실패했습니다.");
+      }
+
+      const data = await res.json();
+      renderResult(data);
+
+      // 생성 후 현장 기록 자동 갱신
+      if (projectName) lookupProject();
+
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      $("btn-generate").disabled = false;
+      $("generate-status").innerHTML = "";
+    }
+  }
+
+  function renderResult(data) {
+    $("result-body").innerHTML = marked.parse(data.draft || "");
+    $("meta-record-id").textContent = `record: ${data.saved_record_id || "미저장 (현장명 없음)"}`;
+    $("result-section").style.display = "block";
+    $("result-section").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function showError(msg) {
+    $("error-box").textContent = msg;
+    $("error-box").style.display = "block";
+  }
+
+  // ---- 이벤트 바인딩 ----
+  $("btn-lookup").addEventListener("click", lookupProject);
+  $("btn-generate").addEventListener("click", generateDraft);
+  $("btn-copy").addEventListener("click", () => {
+    navigator.clipboard.writeText($("result-body").innerText);
+    $("btn-copy").textContent = "복사됨";
+    setTimeout(() => { $("btn-copy").textContent = "복사"; }, 1500);
+  });
+
+  loadDocumentTypes();
+</script>
+
+</body>
+</html>
