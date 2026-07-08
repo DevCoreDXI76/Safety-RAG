@@ -191,10 +191,12 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
 
     response = claude_client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=8000,
+        max_tokens=4000,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )
+
+    print(f"stop_reason: {response.stop_reason}")
 
     draft = response.content[0].text.strip()
 
