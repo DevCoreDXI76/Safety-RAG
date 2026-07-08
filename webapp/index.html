@@ -6,6 +6,7 @@
 <title>안전서류 초안 생성기</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;700&family=Noto+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <style>
   :root {
@@ -366,7 +367,7 @@
 
 <script>
   // 로컬 테스트용. Railway 등에 배포한 뒤에는 실제 API 도메인으로 교체할 것.
-  const API_BASE = "http://127.0.0.1:8000";
+  const API_BASE = "https://web-production-9d1bd.up.railway.app";
 
   const state = {
     documentTypes: [],
@@ -581,6 +582,13 @@
     $("btn-copy").textContent = "복사됨";
     setTimeout(() => { $("btn-copy").textContent = "복사"; }, 1500);
   });
+
+  // 텔레그램 미니앱 초기화 — 텔레그램 안에서 열렸을 때만 동작, 브라우저 단독 실행 시엔 무시됨
+if (window.Telegram && window.Telegram.WebApp) {
+  const tg = window.Telegram.WebApp;
+  tg.ready();       // 텔레그램에게 "화면 준비 끝났다" 알림
+  tg.expand();       // 화면을 최대 높이로 펼침 (반쯤 열린 상태 방지)
+}
 
   loadDocumentTypes();
 </script>
