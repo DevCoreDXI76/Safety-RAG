@@ -1,6 +1,10 @@
 # 안전서류 AI 초안 생성 시스템 (RAG 학습 프로젝트) — 인계 문서
 
 > 이 문서는 새 채팅창에서 이어서 작업하기 위한 맥락 요약입니다. 이 문서 전체를 새 대화 시작 시 첨부하고 "이어서 진행해줘"라고 요청하면 됩니다.
+> 최종 업데이트: 2026-07-08 (Phase 4 — 웹 인터페이스 1차 배포까지 반영)
+> **참고**: 1~4번 섹션(배경·시장조사·기술방향)은 프로젝트 초기 기록으로 지금도 유효합니다.
+> 5번 이후 섹션은 최신 상태로 갱신했습니다. 코드의 최신 상세 스펙은 `docs/SPEC.md`,
+> 진행 이력은 `docs/PLAN.md`를 함께 참고하세요 (이 문서는 요약, 그 둘이 정본).
 
 ---
 
@@ -89,15 +93,20 @@
 
 **현재 결정**: Phase 1 MVP는 **Voyage AI(voyage-3)**로 시작 (Anthropic 생태계 일관성, 학습 목적에 충분).
 
-### 전체 로드맵
-- **Phase 1 (진행 중)**: 기본 RAG 파이프라인 구축 — 지식베이스 청킹 → Voyage 임베딩 → 코사인 유사도 검색 → Claude 생성
-- **Phase 2**: 본인 검증 — 실제 시나리오로 테스트
-- **Phase 3 (고도화 실험, 학습 포인트)**: Contextual Retrieval, Reranking(Cohere 등), 하이브리드 검색(벡터+키워드), 임베딩 모델 비교실험(Voyage vs Cohere multilingual vs 한국어 특화 오픈소스)
-- **Phase 4**: 검증되면 웹/봇 인터페이스로 감싸서 타인도 사용 가능하게 확장
+### 전체 로드맵 (당초 계획 — 실제 진행 상태는 `docs/PLAN.md` 참조)
+- **Phase 1** ✅: 기본 RAG 파이프라인 구축 — 지식베이스 청킹 → Voyage 임베딩 → 코사인 유사도 검색 → Claude 생성
+- **Phase 2** ✅: 본인 검증 — 실제 시나리오로 테스트
+- **Phase 3** ✅: 임베딩 모델 비교실험(Voyage vs Cohere multilingual vs KURE-v1). Contextual Retrieval·Reranking·하이브리드 검색은 현재 규모에서 우선순위 낮다고 판단해 보류
+- **Phase 3.5** ✅: 개인용 실사용성 다듬기 (메뉴 선택, 다중 회차 선택, 버그 수정)
+- **Phase 4** 🚧: 웹 인터페이스(FastAPI + 텔레그램 미니앱)로 확장, Railway 1차 배포 완료 — 정적 서빙 등 마무리 작업 진행 중
 
 ---
 
 ## 5. 현재까지 구축한 것 (프로젝트: `safety-rag`)
+
+> 아래는 요약입니다. 함수 시그니처, 프롬프트 원문, 모듈별 상세 설계는 `docs/SPEC.md`가 정본이니
+> 코드를 직접 수정하기 전에 그쪽을 먼저 확인하세요. 이 문서에는 더 이상 전체 코드를 복사해두지
+> 않습니다 (예전 버전은 금방 코드와 어긋나 오히려 혼란을 줬음).
 
 ### 개발 환경
 - Windows, Python 3.11.9, VS Code
@@ -106,212 +115,44 @@
 - **참고**: `pip` 명령어가 PowerShell에서 직접 인식 안 되는 이슈가 있었음 → `py -m pip install ...`로 해결
 - VS Code Pylance의 "Import could not be resolved" 경고는 인터프리터를 가상환경으로 재선택(`Ctrl+Shift+P` → `Python: Select Interpreter` → `venv\Scripts\python.exe`)하여 해결
 
-### 폴더 구조
+### 지금 상태 한 줄 요약
+CLI 기반 RAG 파이프라인(Phase 1~3, 임베딩 모델 3종 비교 완료 후 Voyage-3로 최종 확정)에 이어,
+개인용 실사용성 개선(Phase 3.5)까지 마친 뒤, **FastAPI 백엔드 + 텔레그램 미니앱 프론트엔드를
+Railway에 1차 배포**(Phase 4)한 상태. 다음 채팅에서 이어갈 가장 급한 일은 **정적 파일 서빙
+설정**이다(아래 7번 참조).
+
+### 폴더 구조 (핵심만, 전체는 `SPEC.md` 3절 참조)
 ```
 safety-rag/
-├── .env
-├── requirements.txt
-├── knowledge_base/
-│   ├── 위험성평가_실시규정.txt
-│   └── TBM_서식.txt
-├── common.py
-├── build_knowledge_base.py
-├── generate_draft.py
-└── embeddings.json          ← build_knowledge_base.py 실행 후 자동 생성됨
+├── common.py, build_knowledge_base.py, generate_draft.py, test_search.py
+├── migrate_add_ids.py            ← 일회성 마이그레이션 (실행 후 삭제 가능)
+├── Procfile                      ← Railway 배포용
+├── api/                          ← FastAPI 백엔드 (main.py, routes.py, schemas.py)
+├── webapp/index.html             ← 텔레그램 미니앱 프론트엔드
+├── knowledge_base/               ← .txt 5종
+├── projects/{현장명}.json        ← 현장별 생성 기록 누적 저장
+└── docs/PRD.md, PLAN.md, SPEC.md, (이 인계문서)
 ```
 
-### `requirements.txt`
+### 핵심 아키텍처 요약
+- **RAG 파이프라인**: `common.py`가 청킹(문단 우선 분할) + 다중 임베딩 모델 라우팅
+  (`embed_texts()` → voyage/cohere/kure) + 코사인 유사도 검색을 담당. 프로덕션은 Voyage-3 고정
+- **위험성평가 ↔ TBM 연동**: `projects/{현장명}.json`에 기록을 누적 저장하고, TBM 생성 시
+  같은 현장의 위험성평가 기록을 조회해 컨텍스트에 우선 반영 (기록이 여러 건이면 회차 선택)
+- **CLI/API 공유 구조**: `generate_draft.py`의 핵심 함수(`generate_document_draft`,
+  `list_project_records`, `list_risk_assessments`, `get_record_by_id`)는 `input()`을 쓰지 않는
+  순수 함수라 CLI(`__main__` 블록)와 `api/routes.py`가 동일 로직을 그대로 재사용
+- **웹 인터페이스**: `webapp/index.html`(텔레그램 미니앱) → FastAPI(`api/`, Railway 배포:
+  `https://web-production-9d1bd.up.railway.app`) → 위 핵심 함수 순으로 호출
+
+### `.env` (실제 값은 본인이 채움, Git 제외)
 ```
-anthropic
-voyageai
-numpy
-python-dotenv
-```
-
-### `.env` (실제 값은 본인이 채움)
-```
-ANTHROPIC_API_KEY=여기에_클로드_API_키
-VOYAGE_API_KEY=여기에_보이지_API_키
-```
-
-### `common.py` (현재 상태 — 청킹 방식 개선 전 버전)
-```python
-"""
-공통 함수 모음
-- 텍스트 청킹
-- 임베딩 저장/로드
-- 코사인 유사도 검색
-"""
-
-import os
-import json
-import numpy as np
-from dotenv import load_dotenv
-import voyageai
-from anthropic import Anthropic
-
-load_dotenv()
-
-VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-
-EMBEDDINGS_FILE = "embeddings.json"
-KNOWLEDGE_BASE_DIR = "knowledge_base"
-
-voyage_client = voyageai.Client(api_key=VOYAGE_API_KEY)
-claude_client = Anthropic(api_key=ANTHROPIC_API_KEY)
-
-
-def chunk_text(text, chunk_size=500, overlap=50):
-    """
-    텍스트를 chunk_size 글자 단위로 쪼갬 (overlap만큼 겹치게 해서 문맥 손실 최소화)
-    ⚠️ 알려진 문제: 문장/항목 중간에서 끊기는 경우가 있음 (아래 6번 섹션 "개선 제안" 참고)
-    """
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        start += chunk_size - overlap
-    return chunks
-
-
-def load_all_documents():
-    """knowledge_base 폴더의 모든 .txt 파일을 읽어서 청크 리스트로 반환"""
-    all_chunks = []
-    for filename in os.listdir(KNOWLEDGE_BASE_DIR):
-        if not filename.endswith(".txt"):
-            continue
-        filepath = os.path.join(KNOWLEDGE_BASE_DIR, filename)
-        with open(filepath, "r", encoding="utf-8") as f:
-            text = f.read()
-        chunks = chunk_text(text)
-        for chunk in chunks:
-            all_chunks.append({"source": filename, "text": chunk})
-    return all_chunks
-
-
-def save_embeddings(data):
-    with open(EMBEDDINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-
-
-def load_embeddings():
-    if not os.path.exists(EMBEDDINGS_FILE):
-        return None
-    with open(EMBEDDINGS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def cosine_similarity(vec_a, vec_b):
-    a = np.array(vec_a)
-    b = np.array(vec_b)
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-
-
-def search_similar_chunks(query, top_k=5):
-    """쿼리와 가장 유사한 청크 top_k개를 반환"""
-    data = load_embeddings()
-    if data is None:
-        raise FileNotFoundError("embeddings.json이 없습니다. build_knowledge_base.py를 먼저 실행하세요.")
-
-    query_embedding = voyage_client.embed(
-        [query], model="voyage-3", input_type="query"
-    ).embeddings[0]
-
-    scored = []
-    for item in data:
-        score = cosine_similarity(query_embedding, item["embedding"])
-        scored.append((score, item))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [item for score, item in scored[:top_k]]
-```
-
-### `build_knowledge_base.py`
-```python
-"""
-지식 베이스 구축 스크립트
-knowledge_base 폴더의 모든 문서를 청크로 쪼개고 임베딩해서 embeddings.json에 저장
-문서를 추가/수정할 때마다 다시 실행하면 됩니다.
-"""
-
-from common import load_all_documents, save_embeddings, voyage_client
-
-print("문서 로딩 중...")
-chunks = load_all_documents()
-print(f"총 {len(chunks)}개의 청크를 찾았습니다.")
-
-if len(chunks) == 0:
-    print("[경고] knowledge_base 폴더에 .txt 파일이 없습니다. 먼저 파일을 넣어주세요.")
-    exit(1)
-
-print("임베딩 생성 중... (Voyage AI 호출)")
-texts = [c["text"] for c in chunks]
-
-result = voyage_client.embed(texts, model="voyage-3", input_type="document")
-
-for chunk, embedding in zip(chunks, result.embeddings):
-    chunk["embedding"] = embedding
-
-save_embeddings(chunks)
-print(f"완료! embeddings.json에 {len(chunks)}개 청크의 임베딩을 저장했습니다.")
-```
-
-### `generate_draft.py` (현재 상태 — max_tokens 및 디버그 출력 개선 전 버전)
-```python
-"""
-실제 사용 스크립트
-프로젝트 정보를 입력하면, 관련 근거를 검색해서 Claude가 문서 초안을 작성합니다.
-"""
-
-from common import search_similar_chunks, claude_client
-
-def generate_document_draft(document_type, project_info):
-    query = f"{document_type} 작성 관련 {project_info}"
-    relevant_chunks = search_similar_chunks(query, top_k=5)
-
-    context = "\n\n---\n\n".join(
-        f"[출처: {c['source']}]\n{c['text']}" for c in relevant_chunks
-    )
-
-    system_prompt = (
-        "너는 정보통신공사 현장의 안전서류 작성을 돕는 보조 도구야. "
-        "제공된 참고 자료(법령, 표준 서식)를 근거로 문서 초안을 작성해. "
-        "참고 자료에 없는 내용은 추측해서 만들어내지 말고, "
-        "실제 서류처럼 항목과 형식을 갖춰서 작성해. "
-        "마지막에 반드시 '※ 이 초안은 참고용이며, 최종 검토 및 승인은 안전관리자가 직접 수행해야 합니다'라는 문구를 포함해."
-    )
-
-    user_prompt = (
-        f"다음은 {document_type} 작성에 참고할 자료입니다:\n\n{context}\n\n"
-        f"---\n\n"
-        f"이 프로젝트 정보를 바탕으로 {document_type} 초안을 작성해줘:\n{project_info}"
-    )
-
-    response = claude_client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1500,   # ⚠️ 개선 필요: 4000 정도로 늘려야 함 (아래 6번 참고)
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-
-    return response.content[0].text.strip()
-
-
-if __name__ == "__main__":
-    print("=== 안전서류 초안 생성기 (MVP) ===\n")
-    document_type = input("문서 종류 (예: 위험성평가표 / TBM 일지): ").strip()
-    project_info = input("프로젝트/작업 정보를 입력하세요: ").strip()
-
-    print("\n초안 생성 중...\n")
-    draft = generate_document_draft(document_type, project_info)
-
-    print("=" * 50)
-    print(draft)
-    print("=" * 50)
+ANTHROPIC_API_KEY=...
+VOYAGE_API_KEY=...
+COHERE_API_KEY=...              ← Phase 3 비교 실험용
+NOTION_PROJECT_PAGE_ID=...      ← Notion 온보딩용
+VIBE_CODING_TOOL=Claude Code
+TELEGRAM_BOT_TOKEN=...          ← 텔레그램 미니앱/봇 연동용
 ```
 
 ### `knowledge_base/위험성평가_실시규정.txt` (전체 내용)
@@ -422,90 +263,39 @@ TBM에서 다루는 "핵심 유해·위험요인"은 별도로 새로 만드는 
 
 ---
 
-## 6. 테스트 결과 및 발견된 이슈
+## 6. 초기 발견 이슈 — 전부 해결됨 (Phase 1~3.5에서 처리, 이력만 남김)
 
-### 테스트 1: 위험성평가표 생성 — 성공
-입력: "정보통신공사, 광케이블 지중 매설 작업, 인원 5명, 굴착 작업 포함"
-- 지식베이스의 굴착 붕괴, 매설물 손상 등 위험요인이 정확히 반영됨
-- 제거→대체→공학적→관리적→보호구 우선순위 구조 정확히 재현
-- 결재란 구조도 정확히 반영
-- **문제**: `max_tokens=1500` 제한으로 "도로 또는" 에서 답변이 중간에 끊김
+프로젝트 초기(Phase 1)에 아래 이슈들이 발견됐고, 이후 단계에서 모두 해결됨. 해결 과정과 실험
+근거의 자세한 기록은 `docs/PLAN.md`의 Phase 1~3.5 섹션 참조:
 
-### 테스트 2: TBM 일지 생성 — 성공
-같은 입력으로 테스트, 위험성평가표와 다른 형식(회의일시/장소/참석자 서명란)으로 정확히 생성됨. "위험성평가표 해당 항목에서 발췌"라고 명시하고, 점수가 없으면 추측하지 않고 "위험성평가표 점수 기재"로 빈칸 처리한 점이 좋았음(프롬프트의 "추측 금지" 지시가 잘 작동).
+| 이슈 | 해결 내역 |
+|---|---|
+| `max_tokens=1500` 제한으로 생성 중간에 답변이 끊김 | `4000`으로 증설 (Phase 1) |
+| `chunk_text()`가 글자 수 고정 분할이라 문장/항목 중간에서 끊김 | 문단 우선 분할 + 문장 단위 재분할로 교체 (Phase 1) |
+| 검색된 근거를 눈으로 확인할 방법이 없음 | `[검색된 근거 청크]` 디버그 출력 추가, 이후 `test_search.py`로 확장 (Phase 1~2) |
+| 위험성평가 ↔ TBM 연동 미비 (TBM이 일반 가이드만 참고) | `projects/{현장명}.json` 저장 구조 도입, TBM 생성 시 자동/선택 조회 (Phase 2, 이후 Phase 3.5에서 다중 회차 선택으로 고도화) |
+| 임베딩 모델 선택 근거 부족 | Voyage/Cohere/KURE-v1 3파전 비교 실험 → Voyage-3 최종 채택, 실제 원인은 문서 청킹 구조였음을 규명 (Phase 3) |
+| `document_type` 자유 텍스트 입력의 오탐 가능성 | 번호 선택 메뉴(`DOCUMENT_TYPES`)로 교체 (Phase 3.5) |
 
-### 발견된 이슈 1: max_tokens 부족 (해결 방법 제시함, 적용 여부 미확인)
-`generate_draft.py`의 `max_tokens=1500` → `4000`으로 변경 필요
-
-### 발견된 이슈 2: 청킹(chunking) 문제 (해결 코드 제시함, 적용 여부 미확인)
-현재 `chunk_text()`가 글자 수(500자) 기준으로 기계적으로 잘라서, 문장/항목 중간에서 끊기는 문제 발견 (디버그 출력에서 "의 위험성평가 항목 중 발췌)"처럼 문장 중간부터 시작하는 청크 확인됨).
-
-**제안된 개선 코드** (아직 `common.py`에 미적용 상태):
-```python
-def chunk_text(text, max_chunk_size=800):
-    """
-    문단(빈 줄) 단위로 텍스트를 나누고, 너무 짧은 문단은 합치고
-    너무 긴 문단은 다시 쪼갬. 문장/항목 중간에서 끊기는 걸 최소화.
-    """
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-
-    chunks = []
-    current = ""
-
-    for para in paragraphs:
-        if len(current) + len(para) <= max_chunk_size:
-            current += ("\n\n" if current else "") + para
-        else:
-            if current:
-                chunks.append(current)
-            if len(para) > max_chunk_size:
-                sentences = para.split(". ")
-                sub_chunk = ""
-                for sentence in sentences:
-                    if len(sub_chunk) + len(sentence) <= max_chunk_size:
-                        sub_chunk += sentence + ". "
-                    else:
-                        if sub_chunk:
-                            chunks.append(sub_chunk.strip())
-                        sub_chunk = sentence + ". "
-                if sub_chunk:
-                    chunks.append(sub_chunk.strip())
-                current = ""
-            else:
-                current = para
-
-    if current:
-        chunks.append(current)
-
-    return chunks
-```
-적용 시 `common.py`의 기존 `chunk_text()` 교체 후, **반드시 `python build_knowledge_base.py` 재실행 필요** (청킹이 바뀌면 임베딩도 다시 만들어야 함).
-
-### 추가 제안된 디버그 코드 (아직 미적용)
-`generate_draft.py`의 `generate_document_draft()` 함수 안, `context` 조합 전에 검색된 청크를 출력하는 코드:
-```python
-print("\n[검색된 근거 청크]")
-for i, c in enumerate(relevant_chunks, 1):
-    print(f"{i}. 출처: {c['source']}")
-    print(f"   내용 일부: {c['text'][:80]}...")
-print()
-```
-
-### 발견된 구조적 이슈: 위험성평가 ↔ TBM 실제 연동 미비
-현재는 TBM 생성 시 지식베이스(일반 가이드)에서만 근거를 가져오고 있어, 매번 일반론적인 위험요인이 나옴. 원래 의도대로라면 "오늘 이 프로젝트에서 실제로 생성한 위험성평가표"의 구체적 항목/점수를 TBM이 가져와야 함.
-
-**해결 방향(미착수)**: 위험성평가표 생성 결과를 `projects/현장명.json` 형태로 저장해두고, TBM 생성 시 지식베이스 검색과 별개로 그 프로젝트 파일을 직접 참조하도록 구조 확장 필요.
+Phase 4(웹 인터페이스) 진행 중 새로 발견/해결된 이슈는 `docs/PLAN.md`의 "Phase 4 — 진행 내역"
+섹션 참조 (현장명 미반영 버그, 위험성 점수 공란 버그 등).
 
 ---
 
-## 7. 다음 단계 (우선순위)
+## 7. 다음 단계 (우선순위) — 2026-07-08 기준
 
-1. **청킹 개선 적용** — 위 6번의 개선 코드를 `common.py`에 반영 → `build_knowledge_base.py` 재실행 → 재테스트
-2. **max_tokens 늘리기** — `generate_draft.py`에서 1500 → 4000
-3. **디버그 출력 추가** — 검색된 근거를 눈으로 확인할 수 있도록
-4. **위험성평가 ↔ TBM 실제 연동 구조 설계** — 프로젝트별 JSON 저장 방식 도입
-5. **(Phase 3, 추후)** 임베딩 모델 비교 실험 — Voyage vs Cohere multilingual vs 한국어 특화 오픈소스(KURE-v1 등), Contextual Retrieval, Reranking 적용
-6. **(Phase 4, 추후)** 검증되면 인터페이스 확장 (웹/봇 형태로 타인도 사용 가능하게)
+Phase 1~3.5(CLI 파이프라인)와 Phase 4 1차 배포(FastAPI + 텔레그램 미니앱, Railway)까지 완료된
+상태. 다음 채팅에서 이어갈 때는 아래 순서를 권장:
+
+1. **정적 파일 서빙 설정** — `api/main.py`에 `webapp/index.html`을 서빙하는 라우트 또는
+   `StaticFiles` 마운트 추가 (현재 로컬에서 `/index.html` 등으로 접근 시 404, `docs/SPEC.md`
+   6.5절 "알려진 갭" 참조)
+2. **텔레그램 미니앱 전체 플로우 재검증** — 정적 서빙 정리 후, 실제 텔레그램 앱에서 현장 조회
+   → 문서종류 선택 → 회차 선택 → 생성까지 엔드투엔드 확인
+3. **다중 사용자/인증 여부 결정** — 계속 개인용으로 둘지, 확대 시 최소 접근 제어를 둘지
+   (현재는 현장명만 알면 누구나 조회·생성 가능한 상태)
+4. **(보류 중, 필요 시 재검토)** Contextual Retrieval, Reranking, 하이브리드 검색 — 지식베이스
+   규모가 커지고 검색 경계 케이스가 재발하면 우선순위 상향 검토
 
 ---
 

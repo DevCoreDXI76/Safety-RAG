@@ -1,7 +1,7 @@
 # SPEC — 안전서류 AI 초안 생성 시스템 (safety-rag)
 
 > Technical Specification
-> 최종 업데이트: 2026-07-07
+> 최종 업데이트: 2026-07-08
 
 ---
 
@@ -40,6 +40,30 @@
     project_name 있으면 projects/{현장명}.json에 결과 저장 (누적)
 ```
 
+### 1.1 웹 인터페이스 아키텍처 (Phase 4)
+
+```
+텔레그램 미니앱 (webapp/index.html, Telegram Web App SDK)
+        │  fetch(API_BASE = Railway 배포 URL)
+        ▼
+FastAPI (api/main.py, CORS 전체 허용)
+        │
+        ├─ GET  /document-types                          → DOCUMENT_TYPES 목록
+        ├─ GET  /projects/{project_name}                  → 현장 전체 기록 요약
+        ├─ GET  /projects/{project_name}/risk-assessments → 위험성평가 회차 목록
+        └─ POST /generate                                 → 초안 생성 (risk_assessment_id로
+                                                              특정 회차 지정 가능)
+                        │
+                        ▼
+        generate_draft.py의 순수 함수들을 그대로 재사용
+        (list_project_records, list_risk_assessments, get_record_by_id,
+         generate_document_draft — CLI의 input() 기반 함수와 분리됨)
+```
+
+CLI(`generate_draft.py` 직접 실행)와 웹(API 경유) 두 진입점이 동일한 핵심 로직을 공유하는
+구조. Railway 배포 URL: `https://web-production-9d1bd.up.railway.app`
+(`Procfile`: `uvicorn api.main:app --host 0.0.0.0 --port $PORT`)
+
 ## 2. 개발 환경
 
 | 항목 | 값 |
@@ -58,10 +82,12 @@ safety-rag/
 ├── .env                                  ← Git 제외 (API 키)
 ├── .gitignore
 ├── requirements.txt
+├── Procfile                              ← Railway 배포용 (uvicorn 실행 명령)
 ├── common.py
 ├── build_knowledge_base.py
-├── generate_draft.py
+├── generate_draft.py                     ← CLI 진입점 + API가 재사용하는 핵심 함수
 ├── test_search.py
+├── migrate_add_ids.py                    ← 일회성 마이그레이션 (기존 레코드에 id 부여)
 ├── embeddings_voyage.json                ← Git 제외 (재생성 가능, 프로덕션 사용 모델)
 ├── embeddings_cohere.json                ← Git 제외 (Phase 3 비교 실험용)
 ├── embeddings_kure.json                  ← Git 제외 (Phase 3 비교 실험용)
@@ -73,6 +99,12 @@ safety-rag/
 │   └── 표준작업계획서_가이드.txt
 ├── projects/                             ← Git 제외 여부는 선택 (실험 기록 보존 원하면 포함 가능)
 │   └── {현장명}.json
+├── api/                                  ← FastAPI 백엔드 (Phase 4)
+│   ├── main.py                           ← 앱 진입점, CORS, 헬스체크(`/`)
+│   ├── routes.py                         ← 엔드포인트 (generate_draft.py 함수 재사용)
+│   └── schemas.py                        ← Pydantic 요청/응답 스키마
+├── webapp/                               ← 텔레그램 미니앱 프론트엔드 (Phase 4)
+│   └── index.html                        ← 단일 파일 SPA, Telegram Web App SDK 연동
 └── docs/
     └── (PRD.md, PLAN.md, SPEC.md 등 문서 보관 위치)
 ```
@@ -83,14 +115,17 @@ safety-rag/
 anthropic
 voyageai
 cohere
-sentence-transformers
 numpy
 python-dotenv
+fastapi
+uvicorn[standard]
 ```
 
-`cohere`, `sentence-transformers`는 Phase 3 임베딩 모델 비교 실험을 위해 추가됨.
-`sentence-transformers`는 KURE-v1 로컬 추론 전용이며, 프로덕션 경로(`generate_draft.py`)는
-Voyage만 사용하므로 최소 설치만 필요하다면 생략 가능.
+`cohere`는 Phase 3 임베딩 모델 비교 실험을 위해 추가됨. `fastapi`, `uvicorn[standard]`는
+Phase 4 웹 API를 위해 추가됨. `sentence-transformers`(KURE-v1 로컬 추론 전용)는
+`requirements.txt`에는 포함하지 않음 — `common.py`의 `get_kure_model()` 내부에서 지연
+import하므로, 설치돼 있지 않아도 Voyage 기반 프로덕션 경로(CLI·API 공용)는 정상 동작한다.
+KURE 비교 실험을 다시 돌리려면 로컬에서 `py -m pip install sentence-transformers`로 별도 설치.
 
 ## 5. 환경 변수 (`.env`)
 
@@ -250,6 +285,39 @@ DOCUMENT_TYPES = {
   검색 전용 테스트 경로 분리
 - Phase 3에서 이 스크립트로 Voyage/Cohere/KURE-v1 3파전 비교 실험 수행
 
+### 6.5 `api/` — FastAPI 백엔드 (Phase 4)
+
+#### `api/main.py`
+- `FastAPI` 앱 생성, `CORSMiddleware`로 모든 origin 허용(텔레그램 미니앱에서 호출하기 위함,
+  배포 도메인이 확정되면 좁히는 것을 권장)
+- `GET /` — 헬스체크, `{"status": "ok", "service": "safety-rag API"}` 반환
+- `app.include_router(router)`로 `api/routes.py`의 엔드포인트 등록
+- **알려진 갭**: `webapp/index.html`을 서빙하는 라우트/`StaticFiles` 마운트가 없음 — 프론트엔드는
+  별도로 열거나 다른 정적 호스팅이 필요 (9번 "알려진 한계" 참조)
+
+#### `api/routes.py`
+- `generate_draft.py`의 순수 함수(`list_project_records`, `list_risk_assessments`,
+  `get_record_by_id`, `generate_document_draft`, `DOCUMENT_TYPES`)를 그대로 import해 재사용 —
+  CLI와 로직 이중 구현을 피함
+- `GET /document-types` — `DOCUMENT_TYPES` 딕셔너리를 리스트 형태로 변환해 반환
+- `GET /projects/{project_name}` — 현장의 전체 기록 요약 (`exists` 플래그 포함)
+- `GET /projects/{project_name}/risk-assessments` — TBM 생성 화면에서 선택할 위험성평가 회차 목록
+- `POST /generate` — `risk_assessment_id`가 있으면 `get_record_by_id()`로 해당 회차를 찾아
+  `generate_document_draft()`에 전달(없으면 404), 생성 실패 시 500과 함께 에러 메시지 반환
+
+#### `api/schemas.py`
+- Pydantic 모델: `DocumentTypeItem`/`DocumentTypesResponse`, `RecordSummary`,
+  `ProjectSummaryResponse`, `RiskAssessmentListResponse`, `GenerateRequest`, `GenerateResponse`
+- `RecordSummary.id`는 `Optional` — `migrate_add_ids.py` 적용 전 레코드와의 호환을 위함
+
+### 6.6 `migrate_add_ids.py`
+
+- `projects/*.json`의 레코드 중 `id`가 없는 것에 `uuid4().hex[:12]`를 부여하는 일회성
+  마이그레이션 스크립트
+- **도입 이유**: API의 `risk_assessment_id` 기반 회차 지정 기능을 쓰려면 모든 레코드에 고유
+  id가 있어야 하는데, id 필드 도입 이전에 생성된 기존 레코드에는 없었음
+- 재실행해도 안전(이미 id가 있으면 건드리지 않음), 적용 후 삭제해도 무방
+
 ## 7. 시스템 프롬프트 원문 (생성 규칙)
 
 ```
@@ -297,6 +365,8 @@ DOCUMENT_TYPES = {
 | `document_type` 문자열 포함 매칭 방식의 오탐 가능성 | ✅ 해결 — 자유 텍스트 입력을 번호 선택 메뉴로 교체하여 오입력 자체를 차단 |
 | 다중 위험성평가 기록 시 항상 최신 1건만 참조 (여러 건 종합 불가) | ✅ 해결 — `choose_risk_assessment()`로 2건 이상일 때 번호로 선택 가능하도록 개선, 실제 3건 중 의도한 회차 선택 테스트 완료 |
 | 위험성평가 결과가 구조화되지 않고 텍스트 원문 그대로 저장됨 | 설계상 의도된 단순화 (파싱 비용 대비 이득 낮다고 판단) |
+| `api/main.py`에 `webapp/index.html` 정적 서빙 라우트가 없어 로컬에서 `/`, `/index.html` 등으로 직접 접근 시 404 | 미해결 — Phase 4 다음 액션으로 `StaticFiles` 마운트 추가 예정 |
+| 현재 API에 인증이 없어 현장명만 알면 누구나 해당 현장 기록을 조회·생성 가능 | 설계상 의도(개인용 실사용 단계) — 다중 사용자로 확대 시 재검토 필요 |
 
 ## 10. 지식베이스 작성 원칙 (Phase 3 교훈 반영)
 
