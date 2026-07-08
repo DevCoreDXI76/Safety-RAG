@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from api.routes import router
+from api.webhook import webhook_router
+from api.telegram_bot import set_webhook
 
 app = FastAPI(
     title="safety-rag API",
@@ -20,6 +22,7 @@ app.add_middleware(
 
 # API 라우터를 먼저 등록해야 함 — 정적 파일 마운트가 경로를 가로채지 않도록 순서 중요
 app.include_router(router)
+app.include_router(webhook_router)
 
 # 프론트엔드(webapp/) 정적 파일 서빙. /app 하위 경로로 접근.
 app.mount("/app", StaticFiles(directory="webapp", html=True), name="webapp")
@@ -28,3 +31,8 @@ app.mount("/app", StaticFiles(directory="webapp", html=True), name="webapp")
 @app.get("/")
 def health_check():
     return {"status": "ok", "service": "safety-rag API"}
+
+
+@app.on_event("startup")
+def register_telegram_webhook():
+    set_webhook()

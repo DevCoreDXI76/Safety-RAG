@@ -21,6 +21,10 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 KNOWLEDGE_BASE_DIR = "knowledge_base"
 
+# Railway Volume 마운트 경로(자동 주입) 또는 로컬 개발용 폴백 경로
+DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "./data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
 voyage_client = voyageai.Client(api_key=VOYAGE_API_KEY)
 cohere_client = cohere.Client(api_key=COHERE_API_KEY) if COHERE_API_KEY else None
 claude_client = Anthropic(api_key=ANTHROPIC_API_KEY)

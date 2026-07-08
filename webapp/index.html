@@ -380,6 +380,19 @@
 
   const $ = (id) => document.getElementById(id);
 
+  // 텔레그램 Mini App initData — 백엔드가 Depends(require_telegram_auth)로 검증하는 값.
+  // 브라우저 단독 실행(텔레그램 밖) 시엔 빈 문자열이 되어 401을 받게 된다.
+  function telegramInitData() {
+    return (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || "";
+  }
+
+  function apiFetch(path, options = {}) {
+    const headers = Object.assign({}, options.headers, {
+      "X-Telegram-Init-Data": telegramInitData(),
+    });
+    return fetch(`${API_BASE}${path}`, Object.assign({}, options, { headers }));
+  }
+
   function escapeHtml(str) {
     return str.replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -389,7 +402,7 @@
   // ---- 1. 문서종류 목록 로드 ----
   async function loadDocumentTypes() {
     try {
-      const res = await fetch(`${API_BASE}/document-types`);
+      const res = await apiFetch("/document-types");
       const data = await res.json();
       state.documentTypes = data.document_types;
       renderTypeGrid();
@@ -431,7 +444,7 @@
 
     $("ledger").innerHTML = `<div class="status-line"><span class="spinner"></span> 조회 중...</div>`;
     try {
-      const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`);
+      const res = await apiFetch(`/projects/${encodeURIComponent(name)}`);
       const data = await res.json();
       state.projectRecords = data.records || [];
       renderLedger();
@@ -470,7 +483,7 @@
     }
     $("risk-list").innerHTML = `<div class="status-line"><span class="spinner"></span> 불러오는 중...</div>`;
     try {
-      const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/risk-assessments`);
+      const res = await apiFetch(`/projects/${encodeURIComponent(name)}/risk-assessments`);
       const data = await res.json();
       state.riskAssessments = data.risk_assessments || [];
       renderRiskList();
@@ -537,7 +550,7 @@
     };
 
     try {
-      const res = await fetch(`${API_BASE}/generate`, {
+      const res = await apiFetch("/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

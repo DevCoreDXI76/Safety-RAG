@@ -14,5 +14,8 @@ embeddings_kure.json
 projects/
 usage_log.json
 
+# DATA_DIR 로컬 폴백 경로 (Railway에서는 Volume 마운트 경로가 대신 쓰임)
+data/
+
 # Notion onboarding (local only)
 .notion/

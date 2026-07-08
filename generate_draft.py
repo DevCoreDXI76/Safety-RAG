@@ -1,7 +1,7 @@
 """
 안전서류 초안 생성 스크립트 (CLI)
 - 문서 종류를 메뉴에서 선택 (자유 텍스트 오입력 문제 차단)
-- 위험성평가표 생성 시 projects/{현장명}.json에 결과 저장
+- 위험성평가표 생성 시 {DATA_DIR}/projects/{user_id}/{현장명}.json에 결과 저장
 - TBM 일지 생성 시, 같은 현장명에 여러 위험성평가 기록이 있으면 선택 가능
 
 핵심 로직(generate_document_draft 등)은 api/routes.py에서도 그대로 재사용된다.
@@ -11,9 +11,10 @@ import os
 import json
 import uuid
 from datetime import datetime
-from common import search_similar_chunks, claude_client
+from common import search_similar_chunks, claude_client, DATA_DIR
 
-PROJECTS_DIR = "projects"
+PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
+CLI_USER_ID = "cli_local"  # 텔레그램 계정이 없는 CLI 실행 시 사용할 고정 user_id
 
 DOCUMENT_TYPES = {
     "1": "위험성평가표",
@@ -25,9 +26,10 @@ DOCUMENT_TYPES = {
 }
 
 
-def ensure_projects_dir():
-    if not os.path.exists(PROJECTS_DIR):
-        os.makedirs(PROJECTS_DIR)
+def ensure_projects_dir(user_id):
+    path = os.path.join(PROJECTS_DIR, str(user_id))
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def choose_document_type():
@@ -45,20 +47,20 @@ def choose_document_type():
         print("잘못된 입력입니다. 목록에 있는 번호를 입력하세요.")
 
 
-def load_project_data(project_name):
+def load_project_data(user_id, project_name):
     """현장 JSON 파일 로드. 없으면 None."""
-    filepath = os.path.join(PROJECTS_DIR, f"{project_name}.json")
+    filepath = os.path.join(PROJECTS_DIR, str(user_id), f"{project_name}.json")
     if not os.path.exists(filepath):
         return None
     with open(filepath, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_project_record(project_name, document_type, project_info, draft):
+def save_project_record(user_id, project_name, document_type, project_info, draft):
     """현장 기록을 저장하고, 저장된 레코드(id 포함)를 반환한다."""
-    ensure_projects_dir()
-    filepath = os.path.join(PROJECTS_DIR, f"{project_name}.json")
-    data = load_project_data(project_name) or {"project_name": project_name, "records": []}
+    ensure_projects_dir(user_id)
+    filepath = os.path.join(PROJECTS_DIR, str(user_id), f"{project_name}.json")
+    data = load_project_data(user_id, project_name) or {"project_name": project_name, "records": []}
 
     record = {
         "id": uuid.uuid4().hex[:12],
@@ -75,33 +77,33 @@ def save_project_record(project_name, document_type, project_info, draft):
     return record
 
 
-def list_project_records(project_name):
+def list_project_records(user_id, project_name):
     """현장의 전체 기록 목록 반환 (없으면 빈 리스트)"""
-    data = load_project_data(project_name)
+    data = load_project_data(user_id, project_name)
     if data is None:
         return []
     return data["records"]
 
 
-def list_risk_assessments(project_name):
+def list_risk_assessments(user_id, project_name):
     """같은 현장명의 위험성평가표 기록을 전부 반환 (오래된 순)"""
-    return [r for r in list_project_records(project_name) if "위험성평가" in r["document_type"]]
+    return [r for r in list_project_records(user_id, project_name) if "위험성평가" in r["document_type"]]
 
 
-def get_record_by_id(project_name, record_id):
+def get_record_by_id(user_id, project_name, record_id):
     """id로 특정 기록 하나를 찾는다. 없으면 None."""
-    for r in list_project_records(project_name):
+    for r in list_project_records(user_id, project_name):
         if r.get("id") == record_id:
             return r
     return None
 
 
-def choose_risk_assessment(project_name):
+def choose_risk_assessment(user_id, project_name):
     """
     CLI 전용: 같은 현장의 위험성평가 기록이 여러 건이면 선택하게 하고,
     1건이면 자동 사용, 0건이면 None 반환.
     """
-    records = list_risk_assessments(project_name)
+    records = list_risk_assessments(user_id, project_name)
     if not records:
         print(f"[연동] '{project_name}' 현장의 위험성평가 기록을 찾지 못했습니다. "
               f"일반 지식베이스만 참고합니다.\n")
@@ -128,9 +130,9 @@ def choose_risk_assessment(project_name):
         print("잘못된 입력입니다.")
 
 
-def show_project_summary(project_name):
+def show_project_summary(user_id, project_name):
     """CLI 전용: 현장 기록 조회 - 어떤 문서가 몇 건 있는지 요약 출력"""
-    records = list_project_records(project_name)
+    records = list_project_records(user_id, project_name)
     if not records:
         print(f"'{project_name}' 현장의 기록이 없습니다. 새로 시작합니다.\n")
         return
@@ -139,7 +141,7 @@ def show_project_summary(project_name):
         print(f"  - {r['created_at']} | {r['document_type']} | {r['project_info'][:40]}...")
     print()
 
-def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None):
+def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None):
     query = f"{document_type} 작성 관련 {project_info}"
     relevant_chunks = search_similar_chunks(query, top_k=5)
 
@@ -197,8 +199,8 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
     draft = response.content[0].text.strip()
 
     saved_record = None
-    if project_name:
-        saved_record = save_project_record(project_name, document_type, project_info, draft)
+    if project_name and user_id:
+        saved_record = save_project_record(user_id, project_name, document_type, project_info, draft)
 
     return draft, saved_record
 
@@ -208,21 +210,24 @@ if __name__ == "__main__":
     project_name = input("현장명을 입력하세요 (연동 저장용, 생략하려면 엔터): ").strip() or None
 
     if project_name:
-        show_project_summary(project_name)
+        show_project_summary(CLI_USER_ID, project_name)
 
     document_type = choose_document_type()
     project_info = input("프로젝트/작업 정보를 입력하세요: ").strip()
 
     risk_record = None
     if "TBM" in document_type and project_name:
-        risk_record = choose_risk_assessment(project_name)
+        risk_record = choose_risk_assessment(CLI_USER_ID, project_name)
 
     print("\n초안 생성 중...\n")
-    draft, _ = generate_document_draft(document_type, project_info, project_name, risk_record)
+    draft, _ = generate_document_draft(
+        document_type, project_info, project_name, risk_record, user_id=CLI_USER_ID
+    )
 
     print("=" * 50)
     print(draft)
     print("=" * 50)
 
     if project_name:
-        print(f"\n'{project_name}' 현장 기록이 projects/{project_name}.json에 저장되었습니다.")
+        saved_path = os.path.join(PROJECTS_DIR, CLI_USER_ID, f"{project_name}.json")
+        print(f"\n'{project_name}' 현장 기록이 {saved_path}에 저장되었습니다.")
