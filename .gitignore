@@ -8,9 +8,11 @@ venv/
 __pycache__/
 *.pyc
 
-# 생성된 임베딩/결과물 (재생성 가능하므로 제외 권장)
-embeddings.json
+# 생성된 임베딩/결과물 (voyage는 프로덕션용이라 Git에 포함 — 아래 목록에서 제외)
+embeddings_cohere.json
+embeddings_kure.json
 projects/
+usage_log.json
 
 # Notion onboarding (local only)
 .notion/
