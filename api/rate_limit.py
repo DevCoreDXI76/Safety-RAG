@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common import DATA_DIR
-from api.access_control import DAILY_LIMIT
+from api.access_control import DAILY_LIMIT, ADMIN_TELEGRAM_USER_ID
 
 KST = timezone(timedelta(hours=9))
 USAGE_LOG_FILE = os.path.join(DATA_DIR, "usage_log.json")
@@ -44,14 +44,19 @@ def get_usage_count(user_id):
 
 
 def check_and_increment(user_id):
-    """오늘 사용 가능하면 카운트를 올리고 True, 한도(DAILY_LIMIT) 초과면 False."""
+    """
+    오늘 사용 가능하면 카운트를 올리고 True, 한도(DAILY_LIMIT) 초과면 False.
+    관리자(ADMIN_TELEGRAM_USER_ID)는 사용량은 동일하게 기록하되 한도 판정에서는
+    제외해 항상 True를 반환한다.
+    """
     today = _today_kst()
+    is_admin = int(user_id) == ADMIN_TELEGRAM_USER_ID
     with _lock:
         data = _load()
         entry = data.get(str(user_id))
         if not entry or entry.get("date") != today:
             entry = {"date": today, "count": 0}
-        if entry["count"] >= DAILY_LIMIT:
+        if not is_admin and entry["count"] >= DAILY_LIMIT:
             return False
         entry["count"] += 1
         data[str(user_id)] = entry
