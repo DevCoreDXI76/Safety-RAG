@@ -61,6 +61,19 @@ DOCUMENT_TYPE_KB_MAP = {
     "표준 작업계획서": "표준작업계획서_가이드.txt",
 }
 
+# 유사도 검색 랭킹이 아니라 매핑된 knowledge_base 파일 전체를 프롬프트에 통째로
+# 포함시켜야 하는 document_type. "3. 위험성 추정 기준", "4. 위험성 감소대책
+# 우선순위" 같은 정의/규정 섹션은 현장 쿼리와 문장 구조가 안 맞아 유사도
+# 랭킹으로는 안정적으로 뽑히지 않아서 도입함.
+FULL_INCLUDE_DOCUMENT_TYPES = {"위험성평가표"}
+
+
+def read_kb_file(filename):
+    """knowledge_base/ 내 특정 파일의 전체 텍스트를 그대로 읽어 반환"""
+    filepath = os.path.join(KNOWLEDGE_BASE_DIR, filename)
+    with open(filepath, "r", encoding="utf-8") as f:
+        return f.read()
+
 
 def chunk_text(text, max_chunk_size=800):
     """
@@ -191,13 +204,15 @@ def cosine_similarity(vec_a, vec_b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
-def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL, document_type=None):
+def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL, document_type=None, exclude_source=None):
     """
     쿼리와 가장 유사한 청크 top_k개를 반환 (모델 지정 가능).
     document_type이 주어지고 DOCUMENT_TYPE_KB_MAP에 매핑이 있으면, 매핑된
     knowledge_base 파일의 청크를 전부 우선 포함시키고 남은 자리만 나머지
     파일에서 top_k로 채운다. document_type이 없거나 매핑이 없으면 기존처럼
     전체 청크 대상 top_k 검색을 유지한다.
+    exclude_source가 주어지면 해당 파일의 청크는 검색 대상에서 아예 제외한다
+    (해당 파일을 별도로 전체 원문 포함시키는 경우, 중복을 막기 위함).
     """
     data = load_embeddings(model)
     if data is None:
@@ -210,6 +225,8 @@ def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL, document_type=Non
 
     scored = []
     for item in data:
+        if exclude_source and item["source"] == exclude_source:
+            continue
         score = cosine_similarity(query_embedding, item["embedding"])
         scored.append((score, item))
 

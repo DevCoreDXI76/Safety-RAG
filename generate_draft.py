@@ -11,7 +11,14 @@ import os
 import json
 import uuid
 from datetime import datetime
-from common import search_similar_chunks, claude_client, DATA_DIR
+from common import (
+    search_similar_chunks,
+    claude_client,
+    DATA_DIR,
+    DOCUMENT_TYPE_KB_MAP,
+    FULL_INCLUDE_DOCUMENT_TYPES,
+    read_kb_file,
+)
 
 PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
 CLI_USER_ID = "cli_local"  # 텔레그램 계정이 없는 CLI 실행 시 사용할 고정 user_id
@@ -143,7 +150,17 @@ def show_project_summary(user_id, project_name):
 
 def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None):
     query = f"{document_type} 작성 관련 {project_info}"
-    relevant_chunks = search_similar_chunks(query, top_k=5, document_type=document_type)
+
+    full_kb_filename = None
+    if document_type in FULL_INCLUDE_DOCUMENT_TYPES:
+        full_kb_filename = DOCUMENT_TYPE_KB_MAP.get(document_type)
+
+    relevant_chunks = search_similar_chunks(
+        query,
+        top_k=5,
+        document_type=None if full_kb_filename else document_type,
+        exclude_source=full_kb_filename,
+    )
 
     print("\n[검색된 근거 청크]")
     for i, c in enumerate(relevant_chunks, 1):
@@ -154,6 +171,11 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
     context = "\n\n---\n\n".join(
         f"[출처: {c['source']}]\n{c['text']}" for c in relevant_chunks
     )
+
+    if full_kb_filename:
+        full_text = read_kb_file(full_kb_filename)
+        print(f"[전체 원문 포함] {full_kb_filename}")
+        context = f"[출처: {full_kb_filename} (전체 원문)]\n{full_text}\n\n---\n\n{context}"
 
     linked_risk_context = ""
     if risk_assessment_record:
