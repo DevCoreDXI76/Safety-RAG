@@ -51,6 +51,16 @@ EMBEDDING_MODELS = {
 
 DEFAULT_MODEL = "voyage"
 
+# document_type(문서종류 label) → 우선 검색할 knowledge_base 파일 1:1 매핑
+# generate_draft.py의 DOCUMENT_TYPES 라벨과 knowledge_base/ 파일명 기준
+DOCUMENT_TYPE_KB_MAP = {
+    "위험성평가표": "위험성평가_실시규정.txt",
+    "TBM 일지": "TBM_서식.txt",
+    "안전보건교육일지": "안전보건교육_가이드.txt",
+    "산업안전보건관리비 사용명세서": "산업안전보건관리비_가이드.txt",
+    "표준 작업계획서": "표준작업계획서_가이드.txt",
+}
+
 
 def chunk_text(text, max_chunk_size=800):
     """
@@ -181,8 +191,14 @@ def cosine_similarity(vec_a, vec_b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
-def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL):
-    """쿼리와 가장 유사한 청크 top_k개를 반환 (모델 지정 가능)"""
+def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL, document_type=None):
+    """
+    쿼리와 가장 유사한 청크 top_k개를 반환 (모델 지정 가능).
+    document_type이 주어지고 DOCUMENT_TYPE_KB_MAP에 매핑이 있으면, 매핑된
+    knowledge_base 파일의 청크를 전부 우선 포함시키고 남은 자리만 나머지
+    파일에서 top_k로 채운다. document_type이 없거나 매핑이 없으면 기존처럼
+    전체 청크 대상 top_k 검색을 유지한다.
+    """
     data = load_embeddings(model)
     if data is None:
         raise FileNotFoundError(
@@ -198,7 +214,16 @@ def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL):
         scored.append((score, item))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:top_k]
+
+    priority_file = DOCUMENT_TYPE_KB_MAP.get(document_type) if document_type else None
+
+    if priority_file:
+        priority = [(s, i) for s, i in scored if i["source"] == priority_file]
+        others = [(s, i) for s, i in scored if i["source"] != priority_file]
+        remaining = max(0, top_k - len(priority))
+        top = priority + others[:remaining]
+    else:
+        top = scored[:top_k]
 
     for score, item in top:
         print(f"[search] {item['source']} ({score:.4f}) | {item['text'][:100]!r}")

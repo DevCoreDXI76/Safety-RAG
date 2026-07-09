@@ -143,7 +143,7 @@ def show_project_summary(user_id, project_name):
 
 def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None):
     query = f"{document_type} 작성 관련 {project_info}"
-    relevant_chunks = search_similar_chunks(query, top_k=5)
+    relevant_chunks = search_similar_chunks(query, top_k=5, document_type=document_type)
 
     print("\n[검색된 근거 청크]")
     for i, c in enumerate(relevant_chunks, 1):
