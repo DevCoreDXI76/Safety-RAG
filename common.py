@@ -198,4 +198,9 @@ def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL):
         scored.append((score, item))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [item for score, item in scored[:top_k]]
+    top = scored[:top_k]
+
+    for score, item in top:
+        print(f"[search] {item['source']} ({score:.4f}) | {item['text'][:100]!r}")
+
+    return [item for score, item in top]
