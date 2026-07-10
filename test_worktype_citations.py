@@ -1,0 +1,110 @@
+"""
+표준 작업계획서 4개 작업유형 회귀 테스트 스크립트.
+KB(knowledge_base/표준작업계획서_법정별표.txt)나 generate_draft.py의
+system_prompt/인용 검증 로직을 바꿀 때마다 커밋 전에 실행할 것.
+
+실제 Claude API를 호출하므로 비용이 발생한다 — CI 자동 실행 대상이 아니라
+개발자가 직접 실행하는 온디맨드 스크립트다.
+
+사용 예:
+  python test_worktype_citations.py
+"""
+
+from generate_draft import generate_document_draft
+from common import find_unverified_citations, WORK_TYPE_SECTION_MARKERS
+
+CASES = [
+    ("굴착작업", "정보통신공사 현장에서 광케이블 지중 매설을 위한 굴착 작업. 인원 5명, 굴착기 1대 투입."),
+    ("중량물의 취급 작업", "통신주(전주) 및 케이블 드럼 하역·운반 작업. 인원 4명, 크레인 1대 투입."),
+    ("차량계 건설기계를 사용하는 작업", "굴착기(포크레인)를 이용한 지중관로 매설 작업. 인원 3명."),
+    ("전기작업", "국사 내 전원 인입 작업, 380V 배전반 연계 작업. 인원 2명."),
+]
+
+# 굴착작업에서 이번에 실제로 확인해야 할 최소 기대 사실
+EXCAVATION_EXPECTED_FACTS = [
+    "굴착공사정보지원센터",
+    "제345조",
+    "제346조",
+    "제347조",
+    "수평",
+]
+
+# 이번에 지적받은 오류가 문자 그대로 재발하지 않는지 직접 고정 (간접적으로는
+# find_unverified_citations가 잡아주지만, 신고된 버그는 리터럴로도 고정해둔다)
+EXCAVATION_KNOWN_BAD_PATTERNS = [
+    "제34조", "제35조", "제36조", "제37조",  # 흙막이 지보공 조문 환각(정답: 345~347조)
+]
+
+
+def check_excavation_facts(draft):
+    missing = [f for f in EXCAVATION_EXPECTED_FACTS if f not in draft]
+    bad_hits = [p for p in EXCAVATION_KNOWN_BAD_PATTERNS if p in draft]
+    depth_based_isolation = "굴착 깊이" in draft and "0.5m" in draft
+    return missing, bad_hits, depth_based_isolation
+
+
+def run():
+    print("=== 표준 작업계획서 작업유형별 인용 검증 회귀 테스트 ===\n")
+    all_ok = True
+
+    for work_type, project_info in CASES:
+        if work_type not in WORK_TYPE_SECTION_MARKERS:
+            print(f"[SKIP] {work_type}: WORK_TYPE_SECTION_MARKERS에 없음")
+            continue
+
+        print(f"--- {work_type} ---")
+        draft, _ = generate_document_draft(
+            document_type="표준 작업계획서",
+            project_info=project_info,
+            work_type=work_type,
+        )
+
+        # system_prompt가 항상 이 문구로 마무리하도록 강제하므로, 문서 끝부분에
+        # 이 문구가 없으면 max_tokens 등으로 중간에 잘렸을 가능성이 높다는 신호로 쓴다.
+        if "최종 검토 및 승인은 안전관리자가 직접 수행해야 합니다" not in draft[-300:]:
+            print("  [FAIL] 마무리 문구가 끝부분에 없음 — 문서가 중간에 잘렸을 가능성 (max_tokens 등 확인)")
+            all_ok = False
+        else:
+            print("  [OK] 문서가 마무리 문구까지 완결됨 (잘림 없음)")
+
+        # generate_document_draft가 이미 draft 안에 경고문을 붙여주지만,
+        # 여기서는 별도로 다시 계산해서 원본 context 없이도 draft 자체를 관찰한다.
+        has_warning = "자동 검증 알림" in draft
+        print(f"  [인용 경고] {'있음 — 아래 내용 확인' if has_warning else '없음'}")
+        if has_warning:
+            warn_line = [l for l in draft.split("\n") if "자동 검증 알림" in l]
+            for l in warn_line:
+                print(f"    {l.strip()}")
+            all_ok = False
+
+        if work_type == "굴착작업":
+            missing, bad_hits, depth_based = check_excavation_facts(draft)
+            if missing:
+                print(f"  [FAIL] 기대 사실 누락: {missing}")
+                all_ok = False
+            else:
+                print("  [OK] 기대 사실(사전신고/제345~347조/수평 이격거리) 모두 포함")
+
+            if bad_hits:
+                print(f"  [FAIL] 재발 금지 오류 패턴 발견: {bad_hits}")
+                all_ok = False
+            else:
+                print("  [OK] 흙막이 지보공 조문 환각(제34~37조) 재발 없음")
+
+            if depth_based:
+                print("  [FAIL] '굴착 깊이'와 '0.5m'가 함께 등장 — 이격거리를 깊이 기준으로 서술했을 가능성, 육안 확인 필요")
+                all_ok = False
+            else:
+                print("  [OK] 이격거리를 깊이 기준으로 서술한 흔적 없음")
+
+            if "**안전보건" in draft or draft.rstrip().endswith("**"):
+                print("  [관찰] 표/문서가 잘린 것으로 보이는 패턴 발견 — 육안으로 재확인 필요")
+
+        print()
+
+    print("=" * 50)
+    print("전체 결과:", "PASS" if all_ok else "FAIL (위 로그 확인)")
+
+
+if __name__ == "__main__":
+    run()

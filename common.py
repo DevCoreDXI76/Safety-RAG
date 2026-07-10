@@ -6,6 +6,7 @@
 """
 
 import os
+import re
 import json
 import numpy as np
 from dotenv import load_dotenv
@@ -128,13 +129,60 @@ def extract_kb_section(text, start_marker, end_marker=None):
     return "\n".join(lines).strip()
 
 
+WORK_TYPE_PREAMBLE_START_MARKER = "1. 작업계획서 작성 대상 작업"
+
+
 def get_work_type_context(work_type):
-    """작업유형에 해당하는 법정 별표 섹션만 추출. 매칭 실패 시 빈 문자열."""
+    """
+    작업유형에 해당하는 법정 별표 섹션을 추출. 매칭 실패 시 빈 문자열.
+    "법정 전체 목록"(제38조제1항 근거, 13종 목록, 굴착 2m 기준 등 이미
+    검증된 문장)을 앞에 함께 붙여서, 모델이 그 목록에 없는 세부 기준을
+    스스로 추측해 지어내는 걸 줄인다.
+    """
     markers = WORK_TYPE_SECTION_MARKERS.get(work_type)
     if not markers:
         return ""
     full_text = read_kb_file(WORK_TYPE_KB_FILE)
-    return extract_kb_section(full_text, markers[0], markers[1])
+    preamble = extract_kb_section(full_text, WORK_TYPE_PREAMBLE_START_MARKER, markers[0])
+    work_type_section = extract_kb_section(full_text, markers[0], markers[1])
+    return f"{preamble}\n\n{work_type_section}".strip()
+
+
+# 법령 조문/별표 인용 검증 (소프트 체크): 생성된 초안이 참고자료에 없는
+# 조/별표 번호를 지어내지 않았는지 정규식으로 대조한다. 국가법령정보센터
+# 원문도 "별표 4"처럼 띄어 쓰는 경우가 흔해 숫자 앞뒤 공백을 허용한다.
+CITATION_PATTERN = re.compile(
+    r"제\s*\d+\s*조(?:의\s*\d+)?(?:\s*제\s*\d+\s*항)?(?:\s*제\s*\d+\s*호)?|별표\s*\d+"
+)
+
+
+def extract_citations(text):
+    """텍스트에서 조/항/호/별표 인용을 있는 그대로(정규화 없이) 추출."""
+    return CITATION_PATTERN.findall(text)
+
+
+def _base_article(citation):
+    """
+    인용 문자열에서 공백을 제거하고 "제○조(의○)?" 또는 "별표○" 부분만 남긴다
+    (항·호 세부는 잘라냄). find_unverified_citations에서 비교 직전에만 호출해야
+    "제345조"와 "제345조제1항" 같은 표기 차이를 같은 것으로 인식할 수 있다.
+    """
+    compact = re.sub(r"\s+", "", citation)
+    match = re.match(r"(제\d+조(?:의\d+)?|별표\d+)", compact)
+    return match.group(1) if match else compact
+
+
+def find_unverified_citations(draft, reference_context):
+    """
+    draft에 등장하는 조/별표 인용 중, reference_context(생성에 실제 사용된
+    전체 참고자료)에는 등장하지 않는 것만 반환. 조/별표 단위로만 비교하고
+    항·호 세부 차이는 무시한다. 컨텍스트에 없다고 해서 반드시 틀린 인용은
+    아니므로(오탐 가능) 이 결과는 생성을 막는 용도가 아니라 사람이 확인할
+    수 있도록 경고를 붙이는 용도로만 사용한다.
+    """
+    draft_articles = {_base_article(c) for c in extract_citations(draft)}
+    context_articles = {_base_article(c) for c in extract_citations(reference_context)}
+    return sorted(draft_articles - context_articles)
 
 
 def chunk_text(text, max_chunk_size=800):
