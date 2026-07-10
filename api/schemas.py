@@ -35,7 +35,8 @@ class GenerateRequest(BaseModel):
     document_type: str
     project_info: str
     project_name: Optional[str] = None
-    risk_assessment_id: Optional[str] = None  # TBM 생성 시 연동할 위험성평가 id
+    risk_assessment_id: Optional[str] = None  # TBM/작업계획서 생성 시 연동할 위험성평가 id
+    work_type: Optional[str] = None  # 표준 작업계획서 생성 시 선택한 작업유형
 
 
 class GenerateResponse(BaseModel):

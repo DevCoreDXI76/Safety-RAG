@@ -74,12 +74,67 @@ FULL_INCLUDE_DOCUMENT_TYPES = {
     "표준 작업계획서",
 }
 
+# 표준 작업계획서 - 작업유형별 법정 별표 보완자료 (직접 주입 전용, RAG 검색 대상 아님)
+WORK_TYPE_KB_FILE = "표준작업계획서_법정별표.txt"
+
+# 작업유형 라벨 → (시작 마커, 종료 마커). 마커는 WORK_TYPE_KB_FILE 원문의 헤더
+# 문자열을 그대로 사용한다. 종료 마커는 다음 섹션의 시작 지점(또는 다음 챕터
+# 제목)이며, 마지막 항목은 뒤이어 나오는 "3. 향후 확장 후보..." 챕터 제목까지를
+# 종료 마커로 사용해 해당 작업유형 블록만 정확히 잘라낸다.
+WORK_TYPE_SECTION_MARKERS = {
+    "굴착작업": (
+        "[작업유형: 굴착작업] (13종 중 6번)",
+        "[작업유형: 차량계 건설기계를 사용하는 작업] (13종 중 3번)",
+    ),
+    "차량계 건설기계를 사용하는 작업": (
+        "[작업유형: 차량계 건설기계를 사용하는 작업] (13종 중 3번)",
+        "[작업유형: 전기작업] (13종 중 5번, 안전보건규칙 제318조 관련)",
+    ),
+    "전기작업": (
+        "[작업유형: 전기작업] (13종 중 5번, 안전보건규칙 제318조 관련)",
+        "[작업유형: 중량물의 취급 작업] (13종 중 11번)",
+    ),
+    "중량물의 취급 작업": (
+        "[작업유형: 중량물의 취급 작업] (13종 중 11번)",
+        "3. 향후 확장 후보: 차량계 하역운반기계등을 사용하는 작업 (13종 중 2번)",
+    ),
+}
+
 
 def read_kb_file(filename):
     """knowledge_base/ 내 특정 파일의 전체 텍스트를 그대로 읽어 반환"""
     filepath = os.path.join(KNOWLEDGE_BASE_DIR, filename)
     with open(filepath, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def extract_kb_section(text, start_marker, end_marker=None):
+    """
+    start_marker부터 (end_marker가 있으면) 그 직전까지 잘라내 반환.
+    구분용으로만 쓰인 순수 대시(-) 줄은 결과에서 제거한다.
+    start_marker를 찾지 못하면 빈 문자열을 반환한다.
+    """
+    start = text.find(start_marker)
+    if start == -1:
+        return ""
+    end = text.find(end_marker, start + len(start_marker)) if end_marker else len(text)
+    if end == -1:
+        end = len(text)
+    section = text[start:end]
+    lines = [
+        line for line in section.split("\n")
+        if not (line.strip() and set(line.strip()) == {"-"})
+    ]
+    return "\n".join(lines).strip()
+
+
+def get_work_type_context(work_type):
+    """작업유형에 해당하는 법정 별표 섹션만 추출. 매칭 실패 시 빈 문자열."""
+    markers = WORK_TYPE_SECTION_MARKERS.get(work_type)
+    if not markers:
+        return ""
+    full_text = read_kb_file(WORK_TYPE_KB_FILE)
+    return extract_kb_section(full_text, markers[0], markers[1])
 
 
 def chunk_text(text, max_chunk_size=800):
@@ -218,8 +273,9 @@ def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL, document_type=Non
     knowledge_base 파일의 청크를 전부 우선 포함시키고 남은 자리만 나머지
     파일에서 top_k로 채운다. document_type이 없거나 매핑이 없으면 기존처럼
     전체 청크 대상 top_k 검색을 유지한다.
-    exclude_source가 주어지면 해당 파일의 청크는 검색 대상에서 아예 제외한다
-    (해당 파일을 별도로 전체 원문 포함시키는 경우, 중복을 막기 위함).
+    exclude_source가 주어지면(문자열 또는 문자열 컬렉션) 해당 파일(들)의 청크는
+    검색 대상에서 아예 제외한다 (해당 파일을 별도로 전체/부분 원문 포함시키는
+    경우, 중복을 막기 위함).
     """
     data = load_embeddings(model)
     if data is None:
@@ -228,11 +284,18 @@ def search_similar_chunks(query, top_k=5, model=DEFAULT_MODEL, document_type=Non
             f"build_knowledge_base.py --model {model} 을 먼저 실행하세요."
         )
 
+    if exclude_source is None:
+        excluded_sources = set()
+    elif isinstance(exclude_source, str):
+        excluded_sources = {exclude_source}
+    else:
+        excluded_sources = set(exclude_source)
+
     query_embedding = embed_texts([query], input_type="query", model=model)[0]
 
     scored = []
     for item in data:
-        if exclude_source and item["source"] == exclude_source:
+        if item["source"] in excluded_sources:
             continue
         score = cosine_similarity(query_embedding, item["embedding"])
         scored.append((score, item))

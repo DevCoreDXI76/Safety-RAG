@@ -81,6 +81,7 @@ def generate(req: GenerateRequest, telegram_user: dict = Depends(require_telegra
             project_name=req.project_name,
             risk_assessment_record=risk_record,
             user_id=user_id,
+            work_type=req.work_type,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"생성 중 오류 발생: {str(e)}")
