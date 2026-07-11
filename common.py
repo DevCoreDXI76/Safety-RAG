@@ -130,6 +130,36 @@ def extract_kb_section(text, start_marker, end_marker=None):
 
 
 WORK_TYPE_PREAMBLE_START_MARKER = "1. 작업계획서 작성 대상 작업"
+# 프리앰블("법정 전체 목록")의 끝은 항상 이 챕터 제목이어야 한다. 예전에는
+# 끝 마커로 markers[0](요청받은 work_type 자신의 시작 마커)을 썼는데, 그러면
+# 파일 안에서 나중에 나오는 work_type(전기작업·중량물)을 요청할 때 그 사이에
+# 있는 다른 work_type 섹션(굴착작업·차량계건설기계)까지 통째로 딸려 들어가는
+# 버그가 있었다(2026-07-11 발견 — 전기작업 컨텍스트에 굴착작업 사전조사
+# 내용까지 포함되고 있었음). 섹션 2 제목을 고정 끝 마커로 써서 프리앰블
+# 범위를 "법정 전체 목록" 하나로 못박는다.
+WORK_TYPE_PREAMBLE_END_MARKER = "2. 정보통신공사 현장 우선 적용 작업유형"
+
+# 안전보건교육 특별교육 항목 - RAG 검색으로만 끌려오면 매 생성마다 top-k
+# 순위에 따라 등장 여부가 달라질 수 있다(실제로 맨홀/밀폐공간 혼동 사례
+# 발생, 2026-07-11). 작업유형과 명확히 연결되는 특별교육 항목은 work_type
+# 법정별표와 동일하게 직접 주입해 매번 안정적으로 등장하도록 한다.
+EDUCATION_KB_FILE = "안전보건교육_법정시간및내용.txt"
+
+# 작업유형 라벨 → [(시작 마커, 종료 마커), ...] 리스트. 여러 항목을 연달아
+# 주입할 수 있도록 리스트로 관리한다 (예: 굴착작업은 굴착 특별교육이 필수,
+# 맨홀작업 특별교육은 광케이블 지중매설 현장에서 맨홀 진입이 흔해 참고용으로
+# 함께 제공).
+WORK_TYPE_EDUCATION_REFS = {
+    "굴착작업": [
+        ("[제19호] 굴착면의 높이가 2미터 이상이 되는 지반 굴착작업",
+         "[제27호] 건축물의 골조, 다리의 상부구조 또는 탑의 금속제 부재로"),
+        ("[제34호] 맨홀작업", "[제35호] 밀폐공간에서의 작업"),
+    ],
+    "전기작업": [
+        ("[제17호] 전압이 75볼트 이상인 정전 및 활선작업",
+         "[제19호] 굴착면의 높이가 2미터 이상이 되는 지반 굴착작업"),
+    ],
+}
 
 
 def get_work_type_context(work_type):
@@ -137,15 +167,33 @@ def get_work_type_context(work_type):
     작업유형에 해당하는 법정 별표 섹션을 추출. 매칭 실패 시 빈 문자열.
     "법정 전체 목록"(제38조제1항 근거, 13종 목록, 굴착 2m 기준 등 이미
     검증된 문장)을 앞에 함께 붙여서, 모델이 그 목록에 없는 세부 기준을
-    스스로 추측해 지어내는 걸 줄인다.
+    스스로 추측해 지어내는 걸 줄인다. WORK_TYPE_EDUCATION_REFS에 매핑이
+    있으면 관련 안전보건교육 특별교육 항목도 함께 직접 주입한다(RAG
+    검색에 맡기지 않음 — top-k 순위 변동으로 매번 다르게 나오는 문제 방지).
     """
     markers = WORK_TYPE_SECTION_MARKERS.get(work_type)
     if not markers:
         return ""
     full_text = read_kb_file(WORK_TYPE_KB_FILE)
-    preamble = extract_kb_section(full_text, WORK_TYPE_PREAMBLE_START_MARKER, markers[0])
+    preamble = extract_kb_section(full_text, WORK_TYPE_PREAMBLE_START_MARKER, WORK_TYPE_PREAMBLE_END_MARKER)
     work_type_section = extract_kb_section(full_text, markers[0], markers[1])
-    return f"{preamble}\n\n{work_type_section}".strip()
+    parts = [preamble, work_type_section]
+
+    education_markers = WORK_TYPE_EDUCATION_REFS.get(work_type)
+    if education_markers:
+        education_text = read_kb_file(EDUCATION_KB_FILE)
+        education_parts = [
+            extract_kb_section(education_text, start, end)
+            for start, end in education_markers
+        ]
+        education_parts = [p for p in education_parts if p]
+        if education_parts:
+            parts.append(
+                f"[관련 안전보건교육 특별교육 항목 - {EDUCATION_KB_FILE}]\n\n"
+                + "\n\n---\n\n".join(education_parts)
+            )
+
+    return "\n\n".join(p for p in parts if p).strip()
 
 
 # 법령 조문/별표 인용 검증 (소프트 체크): 생성된 초안이 참고자료에 없는
