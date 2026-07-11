@@ -1,6 +1,8 @@
 """API 엔드포인트 — 기존 generate_draft.py 로직을 HTTP로 감싼다"""
 
+import json
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 import sys
 import os
 
@@ -12,7 +14,7 @@ from generate_draft import (
     list_project_records,
     list_risk_assessments,
     get_record_by_id,
-    generate_document_draft,
+    generate_document_draft_stream,
 )
 from api.schemas import (
     DocumentTypesResponse,
@@ -21,7 +23,6 @@ from api.schemas import (
     RecordSummary,
     RiskAssessmentListResponse,
     GenerateRequest,
-    GenerateResponse,
 )
 from api.telegram_auth import require_telegram_auth
 from api.rate_limit import check_and_increment
@@ -60,9 +61,16 @@ def get_risk_assessments(project_name: str, telegram_user: dict = Depends(requir
     )
 
 
-@router.post("/generate", response_model=GenerateResponse)
+@router.post("/generate")
 def generate(req: GenerateRequest, telegram_user: dict = Depends(require_telegram_auth)):
-    """문서 초안 생성"""
+    """
+    문서 초안 생성 — SSE(text/event-stream)로 스트리밍한다.
+    각 줄은 `data: {...}\\n\\n` 형식이며 JSON payload의 "type"은 다음 중 하나:
+      - "delta": {"type": "delta", "text": "..."} — 텍스트 조각 (여러 번)
+      - "done":  {"type": "done", "saved_record_id": ..., "linked_risk_assessment_id": ...} — 마지막 1회
+      - "error": {"type": "error", "message": "..."} — 스트림 도중 오류 발생 시
+    레이트리밋(429)/위험성평가 미존재(404)는 스트림 시작 전 일반 HTTP 에러로 응답한다.
+    """
     user_id = telegram_user["user_id"]
 
     if not check_and_increment(user_id):
@@ -74,20 +82,19 @@ def generate(req: GenerateRequest, telegram_user: dict = Depends(require_telegra
         if risk_record is None:
             raise HTTPException(status_code=404, detail="지정한 위험성평가 기록을 찾을 수 없습니다.")
 
-    try:
-        draft, saved_record = generate_document_draft(
-            document_type=req.document_type,
-            project_info=req.project_info,
-            project_name=req.project_name,
-            risk_assessment_record=risk_record,
-            user_id=user_id,
-            work_type=req.work_type,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"생성 중 오류 발생: {str(e)}")
+    def event_stream():
+        try:
+            for event in generate_document_draft_stream(
+                document_type=req.document_type,
+                project_info=req.project_info,
+                project_name=req.project_name,
+                risk_assessment_record=risk_record,
+                user_id=user_id,
+                work_type=req.work_type,
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            error_event = {"type": "error", "message": f"생성 중 오류 발생: {str(e)}"}
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
-    return GenerateResponse(
-        draft=draft,
-        saved_record_id=saved_record["id"] if saved_record else None,
-        linked_risk_assessment_id=risk_record["id"] if risk_record else None,
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

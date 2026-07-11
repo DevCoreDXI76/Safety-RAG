@@ -576,7 +576,7 @@
     }
 
     $("btn-generate").disabled = true;
-    $("generate-status").innerHTML = `<span class="spinner"></span> 초안 생성 중... (최대 30초 정도 걸릴 수 있습니다)`;
+    $("generate-status").innerHTML = `<span class="spinner"></span> 초안 생성 준비 중...`;
     $("result-section").style.display = "none";
 
     const isTBM = state.selectedTypeLabel.includes("TBM");
@@ -600,11 +600,7 @@
         throw new Error(err.detail || "생성에 실패했습니다.");
       }
 
-      const data = await res.json();
-      renderResult(data);
-
-      // 생성 후 현장 기록 자동 갱신
-      if (projectName) lookupProject();
+      await streamResult(res, projectName);
 
     } catch (e) {
       showError(e.message);
@@ -614,11 +610,63 @@
     }
   }
 
-  function renderResult(data) {
-    $("result-body").innerHTML = marked.parse(data.draft || "");
-    $("meta-record-id").textContent = `record: ${data.saved_record_id || "미저장 (현장명 없음)"}`;
-    $("result-section").style.display = "block";
-    $("result-section").scrollIntoView({ behavior: "smooth", block: "start" });
+  // /generate 응답(SSE, text/event-stream)을 읽어 텍스트가 도착하는 대로
+  // 화면에 점진적으로 렌더링한다. 이벤트 형식은 api/routes.py 참고:
+  //   {"type":"delta","text":"..."} (반복) → {"type":"done", saved_record_id, ...}
+  async function streamResult(res, projectName) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let accumulatedText = "";
+    let firstChunkReceived = false;
+    let renderScheduled = false;
+
+    $("meta-record-id").textContent = "record: —";
+    $("result-body").innerHTML = "";
+
+    function scheduleRender() {
+      if (renderScheduled) return;
+      renderScheduled = true;
+      requestAnimationFrame(() => {
+        $("result-body").innerHTML = marked.parse(accumulatedText);
+        renderScheduled = false;
+      });
+    }
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE 이벤트는 "data: {...}\n\n"로 구분됨. 마지막 미완성 조각은 버퍼에 남긴다.
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        const jsonStr = line.slice(5).trim();
+        if (!jsonStr) continue;
+        const event = JSON.parse(jsonStr);
+
+        if (event.type === "delta") {
+          if (!firstChunkReceived) {
+            firstChunkReceived = true;
+            $("generate-status").innerHTML = "";
+            $("result-section").style.display = "block";
+            $("result-section").scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+          accumulatedText += event.text;
+          scheduleRender();
+        } else if (event.type === "done") {
+          $("result-body").innerHTML = marked.parse(accumulatedText);
+          $("meta-record-id").textContent = `record: ${event.saved_record_id || "미저장 (현장명 없음)"}`;
+          if (projectName) lookupProject();
+        } else if (event.type === "error") {
+          throw new Error(event.message);
+        }
+      }
+    }
   }
 
   function showError(msg) {

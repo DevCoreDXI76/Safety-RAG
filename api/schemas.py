@@ -38,8 +38,6 @@ class GenerateRequest(BaseModel):
     risk_assessment_id: Optional[str] = None  # TBM/작업계획서 생성 시 연동할 위험성평가 id
     work_type: Optional[str] = None  # 표준 작업계획서 생성 시 선택한 작업유형
 
-
-class GenerateResponse(BaseModel):
-    draft: str
-    saved_record_id: Optional[str] = None
-    linked_risk_assessment_id: Optional[str] = None
+# /generate는 SSE 스트리밍 응답(text/event-stream)이라 응답 바디에
+# response_model을 적용하지 않는다. 이벤트 형태(delta/done/error)는
+# api/routes.py의 /generate 엔드포인트 docstring 참고.

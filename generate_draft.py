@@ -165,7 +165,20 @@ def show_project_summary(user_id, project_name):
         print(f"  - {r['created_at']} | {r['document_type']} | {r['project_info'][:40]}...")
     print()
 
-def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None, work_type=None):
+def _build_generation_prompt(document_type, project_info, project_name=None, risk_assessment_record=None, work_type=None):
+    """
+    system_prompt/user_prompt 조립 로직 (동기 generate_document_draft와
+    스트리밍 generate_document_draft_stream이 공용으로 사용).
+    (system_param, user_content_blocks, context, linked_risk_context)를 반환.
+    - system_param: messages.create(system=...)에 그대로 넘기는 cache_control
+      적용 블록 리스트 (system_prompt는 모든 요청에서 100% 동일한 고정 텍스트라
+      캐싱 적중률이 가장 높음)
+    - user_content_blocks: messages=[{"role":"user","content": user_content_blocks}]로
+      그대로 넘기는 블록 리스트. project_info 등 매 요청 달라지는 내용과 무관한
+      "안정 구간"(work_type 섹션 + KB 전체원문)을 앞쪽 블록으로 분리해 cache_control을
+      붙인다 — prompt caching은 프리픽스 일치 방식이라, 안정 구간이 앞에 있어야
+      뒤에 오는 가변 구간(RAG 검색 결과 등)과 무관하게 캐시가 재사용된다.
+    """
     query = f"{document_type} 작성 관련 {project_info}"
 
     full_kb_filename = None
@@ -193,23 +206,28 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
         print(f"   내용 일부: {c['text'][:80]}...")
     print()
 
-    context = "\n\n---\n\n".join(
-        f"[출처: {c['source']}]\n{c['text']}" for c in relevant_chunks
-    )
-
-    if full_kb_filename:
-        full_text = read_kb_file(full_kb_filename)
-        print(f"[전체 원문 포함] {full_kb_filename}")
-        context = f"[출처: {full_kb_filename} (전체 원문)]\n{full_text}\n\n---\n\n{context}"
-
+    # 안정 구간: work_type 섹션 + KB 전체원문 — project_info(질의)와 무관하게 항상 동일
+    stable_context = ""
     if is_work_plan_with_type:
         work_type_text = get_work_type_context(work_type)
         if work_type_text:
             print(f"[작업유형 섹션 포함] {WORK_TYPE_KB_FILE} (작업유형: {work_type})")
-            context = (
+            stable_context += (
                 f"[출처: {WORK_TYPE_KB_FILE} (작업유형: {work_type}, 해당 섹션 전체)]\n"
-                f"{work_type_text}\n\n---\n\n{context}"
+                f"{work_type_text}\n\n---\n\n"
             )
+
+    if full_kb_filename:
+        full_text = read_kb_file(full_kb_filename)
+        print(f"[전체 원문 포함] {full_kb_filename}")
+        stable_context += f"[출처: {full_kb_filename} (전체 원문)]\n{full_text}\n\n---\n\n"
+
+    # 가변 구간: RAG 검색 결과 — project_info로 만든 질의에 따라 매번 달라짐
+    dynamic_context = "\n\n---\n\n".join(
+        f"[출처: {c['source']}]\n{c['text']}" for c in relevant_chunks
+    )
+
+    context = stable_context + dynamic_context  # find_unverified_citations 등에서 쓰는 전체 컨텍스트
 
     linked_risk_context = ""
     if risk_assessment_record:
@@ -250,7 +268,13 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
         "작업유형이 함께 제공된 표준 작업계획서를 작성하는 경우, 참고자료에 제시된 해당 "
         "작업유형의 '사전조사 내용'과 '작업계획서 필수 포함사항' 항목을 빠짐없이 그대로 "
         "반영해. 전기작업이라면 참고자료에 명시된 전압·용량 기준(예: 50볼트/250볼트암페어) "
-        "을 정확히 인용하고, 다른 문서종류(안전보건교육 등)에서 쓰이는 별도 기준과 혼동하지 마.\n\n"
+        "을 정확히 인용하고, 다른 문서종류(안전보건교육 등)에서 쓰이는 별도 기준과 혼동하지 마. "
+        "이때 섹션 구성과 순서는 매번 다음을 그대로 따라 일관되게 유지해: 1) 작업 개요 → "
+        "2) 사전조사 결과 → 3) (참고자료의 '작업계획서 필수 포함사항' 목록에 나열된 항목들을 "
+        "그 목록 순서 그대로, 각각 별도 섹션으로) → 4) 위험요인 및 안전대책 → 5) 작업 단계별 "
+        "절차 → 6) 사용 자재 목록 → 7) 비상시 대응방법 → 8) 그 밖의 안전·보건 관련 사항 → "
+        "9) 작성·검토·승인 서명란. 같은 현장·같은 작업유형으로 여러 번 생성해도 이 섹션 구성과 "
+        "순서가 매번 동일해야 현장에서 문서를 반복 사용/파일링하기 좋다.\n\n"
         "법령 조문 번호·형량·수치를 다룰 때는 아래 두 규칙을 각각 지켜:\n"
         "(A) 참고자료(컨텍스트)에 실제로 등장하는 조문 번호·형량·수치는 반드시 그대로 정확히 "
         "인용해. 참고자료에 있는데도 '혹시 틀릴까 봐' 얼버무리거나 빼고 일반적인 표현으로 "
@@ -275,40 +299,122 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
         "마지막에 반드시 '※ 이 초안은 참고용이며, 최종 검토 및 승인은 안전관리자가 직접 수행해야 합니다'라는 문구를 포함해."
     )
 
-    user_prompt = (
-        f"{site_line}"
-        f"{work_type_line}"
-        f"다음은 {document_type} 작성에 참고할 자료입니다:\n\n{context}"
+    stable_block_text = f"다음은 {document_type} 작성에 참고할 자료입니다:\n\n{stable_context}".rstrip()
+    dynamic_block_text = (
+        f"{site_line}{work_type_line}"
+        f"{dynamic_context}"
         f"{linked_risk_context}\n\n"
         f"---\n\n"
         f"이 프로젝트 정보를 바탕으로 {document_type} 초안을 작성해줘:\n{project_info}"
     )
 
-    response = claude_client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=16000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
+    stable_block = {"type": "text", "text": stable_block_text}
+    if stable_context:
+        # 안정 구간이 있을 때만 캐시 브레이크포인트를 붙인다 (없으면 캐싱해도
+        # 최소 길이(~1024 토큰) 미달일 가능성이 높고, 붙일 이유도 없음)
+        stable_block["cache_control"] = {"type": "ephemeral"}
+    user_content_blocks = [stable_block, {"type": "text", "text": dynamic_block_text}]
 
-    print(f"stop_reason: {response.stop_reason}")
+    system_param = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
 
-    draft = response.content[0].text.strip()
+    return system_param, user_content_blocks, context, linked_risk_context
 
+
+def _finalize_draft(draft, context, linked_risk_context, document_type, project_info, project_name, user_id):
+    """
+    스트리밍이 끝난 뒤든 non-streaming 응답을 받은 직후든, draft 텍스트가
+    확정된 다음에 공통으로 수행하는 후처리(인용 검증 경고 부착 + 현장 기록
+    저장). (최종 draft, saved_record)를 반환.
+    """
     unverified = find_unverified_citations(draft, context + linked_risk_context)
+    warning = None
     if unverified:
         print(f"[WARN] 참고자료에서 확인되지 않은 조문/별표 인용: {unverified}")
-        draft += (
+        warning = (
             "\n\n> ⚠ **자동 검증 알림**: 이 초안에 참고자료로 확인되지 않은 법령 조항 번호가 "
             f"포함되어 있습니다 ({', '.join(unverified)}). 국가법령정보센터에서 정확한 "
             "조번호를 반드시 재확인하세요."
         )
+        draft += warning
 
     saved_record = None
     if project_name and user_id:
         saved_record = save_project_record(user_id, project_name, document_type, project_info, draft)
 
+    return draft, saved_record, warning
+
+
+def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None, work_type=None):
+    system_param, user_content_blocks, context, linked_risk_context = _build_generation_prompt(
+        document_type, project_info, project_name, risk_assessment_record, work_type
+    )
+
+    response = claude_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=16000,
+        system=system_param,
+        messages=[{"role": "user", "content": user_content_blocks}],
+    )
+
+    print(f"stop_reason: {response.stop_reason}")
+    u = response.usage
+    print(
+        f"[캐싱] cache_creation={u.cache_creation_input_tokens}, "
+        f"cache_read={u.cache_read_input_tokens}, input={u.input_tokens}, output={u.output_tokens}"
+    )
+
+    draft = response.content[0].text.strip()
+    draft, saved_record, _ = _finalize_draft(
+        draft, context, linked_risk_context, document_type, project_info, project_name, user_id
+    )
+
     return draft, saved_record
+
+
+def generate_document_draft_stream(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None, work_type=None):
+    """
+    generate_document_draft()의 스트리밍 버전 (제너레이터). API 레이어(FastAPI)가
+    SSE로 감싸 프런트엔드에 전달하는 용도 — CLI는 여전히 기존 동기 버전을 쓴다.
+    다음 형태의 dict를 순서대로 yield한다:
+      {"type": "delta", "text": "..."}  — 텍스트 조각 (반복)
+      {"type": "done", "saved_record_id": ..., "linked_risk_assessment_id": ...}  — 마지막 1회
+    """
+    system_param, user_content_blocks, context, linked_risk_context = _build_generation_prompt(
+        document_type, project_info, project_name, risk_assessment_record, work_type
+    )
+
+    chunks = []
+    with claude_client.messages.stream(
+        model="claude-sonnet-4-6",
+        max_tokens=16000,
+        system=system_param,
+        messages=[{"role": "user", "content": user_content_blocks}],
+    ) as stream:
+        for text in stream.text_stream:
+            chunks.append(text)
+            yield {"type": "delta", "text": text}
+        final_message = stream.get_final_message()
+
+    print(f"stop_reason: {final_message.stop_reason}")
+    u = final_message.usage
+    print(
+        f"[캐싱] cache_creation={u.cache_creation_input_tokens}, "
+        f"cache_read={u.cache_read_input_tokens}, input={u.input_tokens}, output={u.output_tokens}"
+    )
+
+    draft = "".join(chunks).strip()
+    draft, saved_record, warning = _finalize_draft(
+        draft, context, linked_risk_context, document_type, project_info, project_name, user_id
+    )
+    if warning:
+        yield {"type": "delta", "text": warning}
+
+    yield {
+        "type": "done",
+        "saved_record_id": saved_record["id"] if saved_record else None,
+        "linked_risk_assessment_id": risk_assessment_record["id"] if risk_assessment_record else None,
+    }
+
 
 if __name__ == "__main__":
     print("=== 안전서류 초안 생성기 (MVP) ===\n")
