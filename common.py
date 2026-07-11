@@ -161,28 +161,30 @@ def extract_citations(text):
     return CITATION_PATTERN.findall(text)
 
 
-def _base_article(citation):
+def _normalize_citation(citation):
     """
-    인용 문자열에서 공백을 제거하고 "제○조(의○)?" 또는 "별표○" 부분만 남긴다
-    (항·호 세부는 잘라냄). find_unverified_citations에서 비교 직전에만 호출해야
-    "제345조"와 "제345조제1항" 같은 표기 차이를 같은 것으로 인식할 수 있다.
+    인용 문자열의 공백만 제거한다. 조/항/호 구성요소는 그대로 유지한다 —
+    예전에는 "제○조(의○)?"만 남기고 항·호를 잘라냈지만, 그러면 "제38조제1항제6호"
+    (모델이 목록 순서를 보고 "제6호"를 스스로 지어붙인 경우)가 KB의 "제38조제1항"과
+    같은 걸로 취급돼 경고 없이 통과해버리는 구멍이 실제로 발견됐다(항·호까지
+    포함해서 지어낸 세부 번호를 놓침). 항·호까지 그대로 비교하면 "제345조"(KB)
+    vs "제345조제1항"(draft) 같은 사소한 표기 차이도 걸릴 수 있지만, 이 체크는
+    소프트 경고(사람이 확인하는 용도)라 과잉 경고가 누락보다 안전하다는 원칙에
+    따라 세부 유지 쪽을 택한다.
     """
-    compact = re.sub(r"\s+", "", citation)
-    match = re.match(r"(제\d+조(?:의\d+)?|별표\d+)", compact)
-    return match.group(1) if match else compact
+    return re.sub(r"\s+", "", citation)
 
 
 def find_unverified_citations(draft, reference_context):
     """
-    draft에 등장하는 조/별표 인용 중, reference_context(생성에 실제 사용된
-    전체 참고자료)에는 등장하지 않는 것만 반환. 조/별표 단위로만 비교하고
-    항·호 세부 차이는 무시한다. 컨텍스트에 없다고 해서 반드시 틀린 인용은
-    아니므로(오탐 가능) 이 결과는 생성을 막는 용도가 아니라 사람이 확인할
-    수 있도록 경고를 붙이는 용도로만 사용한다.
+    draft에 등장하는 조/항/호/별표 인용 중, reference_context(생성에 실제
+    사용된 전체 참고자료)에 그대로 등장하지 않는 것만 반환. 컨텍스트에 없다고
+    해서 반드시 틀린 인용은 아니므로(오탐 가능) 이 결과는 생성을 막는 용도가
+    아니라 사람이 확인할 수 있도록 경고를 붙이는 용도로만 사용한다.
     """
-    draft_articles = {_base_article(c) for c in extract_citations(draft)}
-    context_articles = {_base_article(c) for c in extract_citations(reference_context)}
-    return sorted(draft_articles - context_articles)
+    draft_citations = {_normalize_citation(c) for c in extract_citations(draft)}
+    context_citations = {_normalize_citation(c) for c in extract_citations(reference_context)}
+    return sorted(draft_citations - context_citations)
 
 
 def chunk_text(text, max_chunk_size=800):
