@@ -360,6 +360,9 @@ def _finalize_draft(draft, context, linked_risk_context, document_type, project_
         draft += range_warning
         warning = (warning or "") + range_warning
 
+    # 이격거리 체커는 마지막에 실행해야 한다 (이전 체크의 경고 텍스트에 포함된 "이격거리" 등의
+    # 단어를 재감지하는 것을 방지). context는 RAG 검색 결과(top-k)일 수 있으므로, "미검증"은
+    # 실제 허위 생성 OR 검색 누락 모두 가능하다 — 따라서 소프트 경고일 뿐 생성 차단은 아니다.
     unverified_clearances = find_unverified_clearance_values(draft, context + linked_risk_context)
     if unverified_clearances:
         print(f"[WARN] 참고자료에서 확인되지 않은 이격거리/간격 수치: {unverified_clearances}")
