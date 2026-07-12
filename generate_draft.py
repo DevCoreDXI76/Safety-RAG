@@ -23,6 +23,7 @@ from common import (
     get_work_type_context,
     find_unverified_citations,
     find_broken_risk_score_ranges,
+    find_unverified_clearance_values,
 )
 
 PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
@@ -354,6 +355,17 @@ def _finalize_draft(draft, context, linked_risk_context, document_type, project_
         )
         draft += range_warning
         warning = (warning or "") + range_warning
+
+    unverified_clearances = find_unverified_clearance_values(draft, context + linked_risk_context)
+    if unverified_clearances:
+        print(f"[WARN] 참고자료에서 확인되지 않은 이격거리/간격 수치: {unverified_clearances}")
+        clearance_warning = (
+            "\n\n> ⚠ **자동 검증 알림**: 이 초안에 참고자료로 확인되지 않은 이격거리/간격 "
+            f"수치가 포함되어 있습니다 ({', '.join(unverified_clearances)}). 현장 실측값으로 "
+            "반드시 재확인하세요."
+        )
+        draft += clearance_warning
+        warning = (warning or "") + clearance_warning
 
     saved_record = None
     if project_name and user_id:
