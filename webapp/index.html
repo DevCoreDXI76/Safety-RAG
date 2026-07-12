@@ -201,6 +201,13 @@
     color: #fff;
     border-color: var(--ink);
   }
+  .type-card-subtitle {
+    display: block;
+    margin-top: 2px;
+    font-size: 11px;
+    font-weight: 400;
+    opacity: 0.65;
+  }
 
   /* 위험성평가 회차 선택 */
   .risk-option {
@@ -376,7 +383,13 @@
   // Railway 배포 완료(260707). Railway 등에 배포한 뒤에는 실제 API 도메인으로 교체할 것.
   const API_BASE = "https://web-production-9d1bd.up.railway.app";
 
-  const WORK_TYPES = ["굴착작업", "차량계 건설기계를 사용하는 작업", "전기작업", "중량물의 취급 작업"];
+  const WORK_TYPES = [
+    { label: "굴착작업" },
+    { label: "차량계 건설기계를 사용하는 작업", subtitle: "굴착기, 로더 등" },
+    { label: "차량계 하역운반기계등을 사용하는 작업", subtitle: "지게차 등" },
+    { label: "전기작업" },
+    { label: "중량물의 취급 작업" },
+  ];
 
   const state = {
     documentTypes: [],
@@ -456,7 +469,10 @@
   // ---- 작업유형 선택 (표준 작업계획서 전용) ----
   function renderWorkTypeGrid() {
     $("worktype-grid").innerHTML = WORK_TYPES.map((wt) => `
-      <button class="type-card" data-worktype="${escapeHtml(wt)}">${escapeHtml(wt)}</button>
+      <button class="type-card" data-worktype="${escapeHtml(wt.label)}">
+        ${escapeHtml(wt.label)}
+        ${wt.subtitle ? `<span class="type-card-subtitle">${escapeHtml(wt.subtitle)}</span>` : ""}
+      </button>
     `).join("");
 
     document.querySelectorAll("#worktype-grid .type-card").forEach((btn) => {

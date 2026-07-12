@@ -22,6 +22,7 @@ from common import (
     WORK_TYPE_SECTION_MARKERS,
     get_work_type_context,
     find_unverified_citations,
+    find_broken_risk_score_ranges,
 )
 
 PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
@@ -255,6 +256,12 @@ def _build_generation_prompt(document_type, project_info, project_name=None, ris
         "기계적으로 반복하지 마. 단, 이 점수는 실제 현장 데이터가 아니라 참고자료 기준에 따른 "
         "'AI 제안값'이므로, 점수를 적을 때마다 반드시 그 옆에 '(AI 제안값, 현장 확인 필수)'라고 "
         "표시해. 절대 빈칸으로 남기지 마.\n\n"
+        "위험성평가표가 아닌 다른 문서(표준 작업계획서 등)를 작성하는 경우에는, 참고자료에 "
+        "위험성 추정 기준(척도, 판정 구간)이 실제로 포함되어 있지 않은 이상 위험성 점수나 "
+        "구간표(예: '1~4 낮음/5~9 중간/10~25 높음' 같은 형태)를 임의로 만들어 넣지 마. "
+        "위험성평가와의 연계를 언급할 필요가 있으면 '해당 작업에 대해 별도로 작성된 "
+        "위험성평가표를 참조'처럼 결과 반영 원칙만 서술하고, 구체적인 점수·구간 수치는 "
+        "적지 마.\n\n"
         "위험성 감소대책을 작성할 때는, 제공된 참고자료에 우선순위 체계(예: 제거→대체→공학적 "
         "대책→관리적 대책→개인보호구)가 명시되어 있다면 각 대책 앞에 해당 라벨을 반드시 붙여. "
         "참고자료에 명시가 없더라도 이 5단계 우선순위 원칙을 기본으로 적용해.\n\n"
@@ -336,6 +343,17 @@ def _finalize_draft(draft, context, linked_risk_context, document_type, project_
             "조번호를 반드시 재확인하세요."
         )
         draft += warning
+
+    broken_ranges = find_broken_risk_score_ranges(draft)
+    if broken_ranges:
+        print(f"[WARN] 위험성 점수 구간 표기 누락(물결표 확인 필요): {broken_ranges}")
+        range_warning = (
+            "\n\n> ⚠ **자동 검증 알림**: 위험성 점수 구간 표기 중 일부가 원래 형식(물결표 "
+            f"포함)으로 확인되지 않습니다 ({', '.join(broken_ranges)}). '1~4', '5~9', "
+            "'10~25' 형식이 맞는지 반드시 재확인하세요."
+        )
+        draft += range_warning
+        warning = (warning or "") + range_warning
 
     saved_record = None
     if project_name and user_id:

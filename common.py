@@ -97,7 +97,11 @@ WORK_TYPE_SECTION_MARKERS = {
     ),
     "중량물의 취급 작업": (
         "[작업유형: 중량물의 취급 작업] (13종 중 11번)",
-        "3. 향후 확장 후보: 차량계 하역운반기계등을 사용하는 작업 (13종 중 2번)",
+        "[작업유형: 차량계 하역운반기계등을 사용하는 작업] (13종 중 2번)",
+    ),
+    "차량계 하역운반기계등을 사용하는 작업": (
+        "[작업유형: 차량계 하역운반기계등을 사용하는 작업] (13종 중 2번)",
+        "3. 위험성평가·TBM과의 연계",
     ),
 }
 
@@ -233,6 +237,32 @@ def find_unverified_citations(draft, reference_context):
     draft_citations = {_normalize_citation(c) for c in extract_citations(draft)}
     context_citations = {_normalize_citation(c) for c in extract_citations(reference_context)}
     return sorted(draft_citations - context_citations)
+
+
+# 위험성평가_실시규정.txt에 명시된 위험성 점수 구간의 정확한 표기. 물결표(~)가
+# 생성 과정에서 누락되는 재발성 표기 오류("1~4"→"14")를 감지하기 위한 기준값 —
+# 조번호 인용 환각이 프롬프트 지시만으로는 100% 막히지 않았던 것과 동일한
+# 성격의 문제라 코드 레벨 체크가 필요하다는 게 이 프로젝트의 반복된 관찰이다.
+# "14"·"59" 같은 깨진 형태 자체를 찾으면 "14명"·"14일" 같은 정상 문맥과 구분이
+# 안 돼 오탐 위험이 크므로, find_unverified_citations와 동일하게 "정확한
+# 형태가 그대로 있는지"만 확인하는 방향으로 뒤집었다.
+RISK_SCORE_RANGE_LABELS = ["1~4", "5~9", "10~25"]
+
+
+def find_broken_risk_score_ranges(draft):
+    """
+    draft에 위험성 점수 구간 관련 문맥("위험성 점수", "구간")이 등장하는데,
+    KB의 정확한 구간 표기(1~4/5~9/10~25) 중 일부가 draft에 그대로 없으면
+    (물결표 누락 등으로 깨졌을 가능성) 빠진 표기만 반환한다. 문맥 자체가
+    없으면(위험성평가표가 아닌 문서 등) 빈 리스트를 반환해 오탐을 피한다.
+    """
+    # "구간"만으로 판단하면 오탐 위험이 있다 — 예: 표준작업계획서(굴착작업)의
+    # "인력굴착 전환 구간"처럼 위험성 점수와 무관한 문맥에도 "구간"이 등장한다
+    # (표준작업계획서_법정별표.txt 참고). "위험성 점수"와 "구간"이 함께 나올 때만
+    # 위험성평가표의 점수 구간표 문맥으로 판단한다.
+    if "위험성 점수" not in draft or "구간" not in draft:
+        return []
+    return [label for label in RISK_SCORE_RANGE_LABELS if label not in draft]
 
 
 def chunk_text(text, max_chunk_size=800):
