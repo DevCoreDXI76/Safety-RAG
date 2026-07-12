@@ -239,6 +239,47 @@ def find_unverified_citations(draft, reference_context):
     return sorted(draft_citations - context_citations)
 
 
+# 이격거리/간격 등 "일반 수치" 가드레일. find_unverified_citations와 반대
+# 방향인 위험성 구간표 체커(find_broken_risk_score_ranges)와 달리, 이격거리는
+# KB마다 값이 상황에 따라 달라 고정된 정답 목록을 만들 수 없다. 그래서 조문
+# 인용 체커와 동일하게 "초안에 있는데 참고자료에 없으면 미검증"이라는
+# 방향으로 설계한다. 감시 대상을 이격거리/간격 계열로 좁혀 오탐을 줄인다 —
+# 앵커 키워드가 없는 수치(예: 지게차 포크 높이 15~20cm)는 애초에 스코프 밖이라
+# 검사하지 않는다.
+CLEARANCE_KEYWORDS = ["이격거리", "이격", "간격", "여유 공간", "안전거리", "접근 한계거리"]
+
+# 단위 알터네이션 순서가 중요하다 - m을 cm/mm보다 먼저 두면 "50cm"의 앞부분만
+# "5"+"0c"로 잘못 나뉘는 게 아니라, 아예 "cm"을 놔두고 뒤의 "m"만 단위로
+# 인식해버리는 부분 매칭 버그가 생긴다.
+DISTANCE_VALUE_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:cm|mm|m|미터|센티미터|센티)(?![a-zA-Z가-힣])"
+)
+
+
+def find_unverified_clearance_values(draft, reference_context):
+    """
+    draft를 <br>/줄바꿈 단위로 나눠, 이격거리 관련 앵커 키워드가 포함된
+    조각에서만 수치+단위 패턴을 추출한다. 그 값이 reference_context에
+    그대로 등장하지 않으면 미검증으로 반환한다 (find_unverified_citations와
+    동일하게 소프트 경고 용도 — 생성을 막지 않고 사람이 확인하도록 표시만 함).
+    """
+    chunks = re.split(r"<br\s*/?>|\n", draft)
+    draft_values = set()
+    for chunk in chunks:
+        if any(kw in chunk for kw in CLEARANCE_KEYWORDS):
+            draft_values.update(
+                _normalize_citation(m.group())
+                for m in DISTANCE_VALUE_PATTERN.finditer(chunk)
+            )
+    if not draft_values:
+        return []
+    context_values = {
+        _normalize_citation(m.group())
+        for m in DISTANCE_VALUE_PATTERN.finditer(reference_context)
+    }
+    return sorted(draft_values - context_values)
+
+
 # 위험성평가_실시규정.txt에 명시된 위험성 점수 구간의 정확한 표기. 물결표(~)가
 # 생성 과정에서 누락되는 재발성 표기 오류("1~4"→"14")를 감지하기 위한 기준값 —
 # 조번호 인용 환각이 프롬프트 지시만으로는 100% 막히지 않았던 것과 동일한
