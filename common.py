@@ -8,6 +8,8 @@
 import os
 import re
 import json
+import threading
+from datetime import datetime, timezone, timedelta
 import numpy as np
 from dotenv import load_dotenv
 import voyageai
@@ -25,6 +27,34 @@ KNOWLEDGE_BASE_DIR = "knowledge_base"
 # Railway Volume 마운트 경로(자동 주입) 또는 로컬 개발용 폴백 경로
 DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "./data")
 os.makedirs(DATA_DIR, exist_ok=True)
+
+KST = timezone(timedelta(hours=9))
+
+# 문서 생성 1건마다 토큰 사용량을 한 줄씩 append하는 JSON Lines 로그.
+# 전체 사용자가 하나의 파일을 공유하고(user_id 필드로 구분), 매 요청마다
+# 파일 전체를 다시 쓰지 않도록(allowed_users.json류의 read-modify-write와
+# 다르게) append 전용으로 설계했다.
+TOKEN_USAGE_LOG_PATH = os.path.join(DATA_DIR, "token_usage_log.jsonl")
+_token_usage_lock = threading.Lock()
+
+
+def log_token_usage(document_type, user_id, usage):
+    """
+    usage는 Anthropic 응답의 .usage 객체(input_tokens/output_tokens/
+    cache_creation_input_tokens/cache_read_input_tokens 속성을 가짐).
+    """
+    entry = {
+        "timestamp": datetime.now(KST).isoformat(),
+        "document_type": document_type,
+        "user_id": user_id,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+        "cache_read_input_tokens": usage.cache_read_input_tokens,
+    }
+    with _token_usage_lock:
+        with open(TOKEN_USAGE_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 voyage_client = voyageai.Client(api_key=VOYAGE_API_KEY)
 cohere_client = cohere.Client(api_key=COHERE_API_KEY) if COHERE_API_KEY else None

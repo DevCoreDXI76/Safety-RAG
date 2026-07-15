@@ -59,6 +59,19 @@ EXCAVATION_KNOWN_BAD_PATTERNS = [
     "제34조", "제35조", "제36조", "제37조",  # 흙막이 지보공 조문 환각(정답: 345~347조)
 ]
 
+# "법정 전체 목록"(표준작업계획서_법정별표.txt 15~33행)의 순번(전기작업=5번째,
+# 중량물 취급=11번째)을 실제 법정 "호" 번호로 오인하는 환각. system_prompt가
+# 굴착작업(6번째) 사례로 이미 이 패턴을 금지하고 있음에도(292~295행) 다른
+# 작업유형에서 재발 확인됨(2026-07-16 실사용 테스트 리포트로 발견,
+# find_unverified_citations가 정상적으로 감지·경고했음 — 체커 결함 아님).
+ELECTRICAL_WORK_KNOWN_BAD_PATTERNS = ["제38조제1항제5호"]
+HEAVY_LOAD_KNOWN_BAD_PATTERNS = ["제38조제1항제11호"]
+
+KNOWN_BAD_PATTERNS_BY_WORK_TYPE = {
+    "전기작업": ELECTRICAL_WORK_KNOWN_BAD_PATTERNS,
+    "중량물의 취급 작업": HEAVY_LOAD_KNOWN_BAD_PATTERNS,
+}
+
 
 def check_excavation_facts(draft):
     missing = [f for f in EXCAVATION_EXPECTED_FACTS if f not in draft]
@@ -96,6 +109,15 @@ def run_case(work_type, project_info):
         for l in warn_line:
             print(f"    {l.strip()}")
         ok = False
+
+    bad_patterns = KNOWN_BAD_PATTERNS_BY_WORK_TYPE.get(work_type)
+    if bad_patterns:
+        bad_hits = [p for p in bad_patterns if p in draft]
+        if bad_hits:
+            print(f"  [FAIL] 재발 금지 오류 패턴 발견(목록 순번→법정 호 번호 오인): {bad_hits}")
+            ok = False
+        else:
+            print("  [OK] 목록 순번→법정 호 번호 오인 패턴 재발 없음")
 
     if work_type == "굴착작업":
         missing, missing_penalty, missing_education, bad_hits, depth_based = check_excavation_facts(draft)

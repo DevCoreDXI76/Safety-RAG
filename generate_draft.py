@@ -24,6 +24,7 @@ from common import (
     find_unverified_citations,
     find_broken_risk_score_ranges,
     find_unverified_clearance_values,
+    log_token_usage,
 )
 
 PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
@@ -324,10 +325,10 @@ def _build_generation_prompt(document_type, project_info, project_name=None, ris
     if stable_context:
         # 안정 구간이 있을 때만 캐시 브레이크포인트를 붙인다 (없으면 캐싱해도
         # 최소 길이(~1024 토큰) 미달일 가능성이 높고, 붙일 이유도 없음)
-        stable_block["cache_control"] = {"type": "ephemeral"}
+        stable_block["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
     user_content_blocks = [stable_block, {"type": "text", "text": dynamic_block_text}]
 
-    system_param = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+    system_param = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
 
     return system_param, user_content_blocks, context, linked_risk_context
 
@@ -349,7 +350,13 @@ def _finalize_draft(draft, context, linked_risk_context, document_type, project_
         )
         draft += warning
 
-    broken_ranges = find_broken_risk_score_ranges(draft)
+    # 위험성 점수 구간표(1~4/5~9/10~25)를 실제로 재정의해야 하는 문서는
+    # 위험성평가표뿐이다. 다른 문서(표준 작업계획서 등)는 system_prompt
+    # 지시에 따라 "위험성평가표 참조"처럼 단어만 언급하고 구체 수치는
+    # 적지 않는 게 정상 동작이라, document_type으로 걸러야 오탐을 피한다.
+    broken_ranges = (
+        find_broken_risk_score_ranges(draft) if document_type == "위험성평가표" else []
+    )
     if broken_ranges:
         print(f"[WARN] 위험성 점수 구간 표기 누락(물결표 확인 필요): {broken_ranges}")
         range_warning = (
@@ -387,7 +394,7 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
     )
 
     response = claude_client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-5",
         max_tokens=16000,
         system=system_param,
         messages=[{"role": "user", "content": user_content_blocks}],
@@ -399,6 +406,7 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
         f"[캐싱] cache_creation={u.cache_creation_input_tokens}, "
         f"cache_read={u.cache_read_input_tokens}, input={u.input_tokens}, output={u.output_tokens}"
     )
+    log_token_usage(document_type, user_id, u)
 
     draft = response.content[0].text.strip()
     draft, saved_record, _ = _finalize_draft(
@@ -422,7 +430,7 @@ def generate_document_draft_stream(document_type, project_info, project_name=Non
 
     chunks = []
     with claude_client.messages.stream(
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-5",
         max_tokens=16000,
         system=system_param,
         messages=[{"role": "user", "content": user_content_blocks}],
@@ -438,6 +446,7 @@ def generate_document_draft_stream(document_type, project_info, project_name=Non
         f"[캐싱] cache_creation={u.cache_creation_input_tokens}, "
         f"cache_read={u.cache_read_input_tokens}, input={u.input_tokens}, output={u.output_tokens}"
     )
+    log_token_usage(document_type, user_id, u)
 
     draft = "".join(chunks).strip()
     draft, saved_record, warning = _finalize_draft(
