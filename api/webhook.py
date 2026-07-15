@@ -10,6 +10,7 @@ from api.access_control import (
     add_pending_request,
     add_allowed_user,
     remove_pending_request,
+    get_pending_request,
 )
 from api.telegram_bot import (
     send_message,
@@ -17,6 +18,7 @@ from api.telegram_bot import (
     answer_callback_query,
     approve_reject_keyboard,
 )
+from api.admin_stats import build_stats_message
 
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 
@@ -43,12 +45,18 @@ async def telegram_webhook(
 
 def _handle_message(message):
     text = message.get("text", "")
-    if text != "/start":
-        return
-
     chat_id = message["chat"]["id"]
     user = message["from"]
     user_id = user["id"]
+
+    if text == "/stats":
+        if user_id != ADMIN_TELEGRAM_USER_ID:
+            return  # 관리자 외에는 조용히 무시 (명령어 존재 자체를 노출하지 않음)
+        send_message(chat_id, build_stats_message())
+        return
+
+    if text != "/start":
+        return
 
     if is_allowed(user_id):
         send_message(chat_id, "이미 사용 승인이 완료되었습니다. 메뉴 버튼으로 미니앱을 여세요.")
@@ -83,7 +91,9 @@ def _handle_callback_query(callback_query):
     message = callback_query["message"]
 
     if action == "approve":
-        add_allowed_user(user_id)
+        pending = get_pending_request(user_id)
+        username = pending.get("username") if pending else None
+        add_allowed_user(user_id, username=username)
         remove_pending_request(user_id)
         edit_message_text(message["chat"]["id"], message["message_id"], f"✅ 승인 완료 (id: {user_id})")
         send_message(user_id, "✅ 승인되었습니다! 메뉴 버튼으로 미니앱을 사용하실 수 있습니다.")

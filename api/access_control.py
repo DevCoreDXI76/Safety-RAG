@@ -46,10 +46,22 @@ def add_allowed_user(user_id, username=None):
         _save(ALLOWED_USERS_FILE, data)
 
 
+def get_allowed_users():
+    with _lock:
+        return _load(ALLOWED_USERS_FILE)
+
+
 def is_pending(user_id):
     with _lock:
         data = _load(PENDING_REQUESTS_FILE)
     return str(user_id) in data
+
+
+def get_pending_request(user_id):
+    """대기 목록에서 해당 user_id의 신청 정보(username, first_name)를 반환. 없으면 None."""
+    with _lock:
+        data = _load(PENDING_REQUESTS_FILE)
+    return data.get(str(user_id))
 
 
 def add_pending_request(user_id, username=None, first_name=None):
