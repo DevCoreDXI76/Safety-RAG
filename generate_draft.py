@@ -10,6 +10,7 @@
 import os
 import json
 import uuid
+import time
 from datetime import datetime
 from common import (
     search_similar_chunks,
@@ -37,6 +38,17 @@ DOCUMENT_TYPES = {
     "4": "산업안전보건관리비 사용명세서",
     "5": "표준 작업계획서",
     "6": "기타 (직접 입력)",
+}
+
+# Haiku A/B 테스트(test_haiku_ab.py, 2026-07-16) 결과: 안전보건교육일지는
+# 15건 정독 검토에서 창작 패턴 없었고 비용 -53%·생성시간 -44%로 확인돼
+# Haiku로 전환. TBM일지는 같은 테스트에서 "재해사례" 섹션 창작(15건 중
+# 3건, 사망사고까지 지어낸 사례 포함)이 확인되어 Sonnet 5 유지로 결정.
+# 명시적으로 model 인자를 넘기면(A/B 테스트 등) 이 매핑을 무시하고 그 값을
+# 그대로 쓴다.
+DEFAULT_MODEL = "claude-sonnet-5"
+MODEL_BY_DOCUMENT_TYPE = {
+    "안전보건교육일지": "claude-haiku-4-5-20251001",
 }
 
 
@@ -274,6 +286,10 @@ def _build_generation_prompt(document_type, project_info, project_name=None, ris
         "반드시 물결표를 넣어서 쓰고, '14', '59'처럼 물결표 없이 숫자를 붙여 쓰지 마.\n\n"
         "문서가 길어지더라도 표와 항목을 끝까지 전부 완성해. 분량이 부족할 것 같으면 각 항목의 "
         "설명을 간결하게 줄이더라도, 마지막 항목과 안내 문구까지는 반드시 포함해.\n\n"
+        "표 안의 각 셀은 완전한 서술문이 아니라 핵심만 간결하게 채워. '~하는 것이 바람직하다', "
+        "'~할 필요가 있다', '~하도록 한다' 같은 군더더기 표현은 빼고, 실무 서류에 실제로 쓰는 "
+        "간결한 명사형·명령형 표현을 써. 표 밖의 종합의견·비고 같은 서술 항목은 지금처럼 문장으로 "
+        "써도 되지만, 불필요하게 길게 늘이지 마.\n\n"
         "작업유형이 함께 제공된 표준 작업계획서를 작성하는 경우, 참고자료에 제시된 해당 "
         "작업유형의 '사전조사 내용'과 '작업계획서 필수 포함사항' 항목을 빠짐없이 그대로 "
         "반영해. 전기작업이라면 참고자료에 명시된 전압·용량 기준(예: 50볼트/250볼트암페어) "
@@ -392,26 +408,33 @@ def _finalize_draft(draft, context, linked_risk_context, document_type, project_
     return draft, saved_record, warning
 
 
-def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None, work_type=None):
+def generate_document_draft(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None, work_type=None, model=None):
+    """model을 명시하지 않으면 MODEL_BY_DOCUMENT_TYPE 매핑을 따른다(문서유형별
+    기본 모델). test_haiku_ab.py처럼 특정 모델을 강제로 지정하고 싶을 때만
+    명시적으로 넘긴다."""
+    resolved_model = model or MODEL_BY_DOCUMENT_TYPE.get(document_type, DEFAULT_MODEL)
     system_param, user_content_blocks, context, linked_risk_context = _build_generation_prompt(
         document_type, project_info, project_name, risk_assessment_record, work_type
     )
 
+    start_time = time.time()
     response = claude_client.messages.create(
-        model="claude-sonnet-5",
+        model=resolved_model,
         max_tokens=16000,
         thinking={"type": "disabled"},
         system=system_param,
         messages=[{"role": "user", "content": user_content_blocks}],
     )
+    generation_seconds = round(time.time() - start_time, 2)
 
     print(f"stop_reason: {response.stop_reason}")
     u = response.usage
     print(
         f"[캐싱] cache_creation={u.cache_creation_input_tokens}, "
-        f"cache_read={u.cache_read_input_tokens}, input={u.input_tokens}, output={u.output_tokens}"
+        f"cache_read={u.cache_read_input_tokens}, input={u.input_tokens}, output={u.output_tokens}, "
+        f"생성시간={generation_seconds}초"
     )
-    log_token_usage(document_type, user_id, u)
+    log_token_usage(document_type, user_id, u, generation_seconds=generation_seconds)
 
     # content[0]이 항상 텍스트 블록이라고 가정하면 안 된다 — Sonnet 5는
     # thinking을 켜면(또는 향후 다른 블록 타입이 섞이면) content[0]이
@@ -427,21 +450,25 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
     return draft, saved_record
 
 
-def generate_document_draft_stream(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None, work_type=None):
+def generate_document_draft_stream(document_type, project_info, project_name=None, risk_assessment_record=None, user_id=None, work_type=None, model=None):
     """
     generate_document_draft()의 스트리밍 버전 (제너레이터). API 레이어(FastAPI)가
     SSE로 감싸 프런트엔드에 전달하는 용도 — CLI는 여전히 기존 동기 버전을 쓴다.
+    실제 서비스(api/routes.py)가 호출하는 경로이므로, model을 명시하지 않으면
+    MODEL_BY_DOCUMENT_TYPE 매핑이 여기서 실질적으로 적용된다.
     다음 형태의 dict를 순서대로 yield한다:
       {"type": "delta", "text": "..."}  — 텍스트 조각 (반복)
       {"type": "done", "saved_record_id": ..., "linked_risk_assessment_id": ...}  — 마지막 1회
     """
+    resolved_model = model or MODEL_BY_DOCUMENT_TYPE.get(document_type, DEFAULT_MODEL)
     system_param, user_content_blocks, context, linked_risk_context = _build_generation_prompt(
         document_type, project_info, project_name, risk_assessment_record, work_type
     )
 
     chunks = []
+    start_time = time.time()
     with claude_client.messages.stream(
-        model="claude-sonnet-5",
+        model=resolved_model,
         max_tokens=16000,
         thinking={"type": "disabled"},
         system=system_param,
@@ -451,14 +478,16 @@ def generate_document_draft_stream(document_type, project_info, project_name=Non
             chunks.append(text)
             yield {"type": "delta", "text": text}
         final_message = stream.get_final_message()
+    generation_seconds = round(time.time() - start_time, 2)
 
     print(f"stop_reason: {final_message.stop_reason}")
     u = final_message.usage
     print(
         f"[캐싱] cache_creation={u.cache_creation_input_tokens}, "
-        f"cache_read={u.cache_read_input_tokens}, input={u.input_tokens}, output={u.output_tokens}"
+        f"cache_read={u.cache_read_input_tokens}, input={u.input_tokens}, output={u.output_tokens}, "
+        f"생성시간={generation_seconds}초"
     )
-    log_token_usage(document_type, user_id, u)
+    log_token_usage(document_type, user_id, u, generation_seconds=generation_seconds)
 
     draft = "".join(chunks).strip()
     draft, saved_record, warning = _finalize_draft(

@@ -38,10 +38,13 @@ TOKEN_USAGE_LOG_PATH = os.path.join(DATA_DIR, "token_usage_log.jsonl")
 _token_usage_lock = threading.Lock()
 
 
-def log_token_usage(document_type, user_id, usage):
+def log_token_usage(document_type, user_id, usage, generation_seconds=None):
     """
     usage는 Anthropic 응답의 .usage 객체(input_tokens/output_tokens/
     cache_creation_input_tokens/cache_read_input_tokens 속성을 가짐).
+    generation_seconds는 API 호출 시작~끝까지 걸린 실제 시간(초) — 캐시
+    적중률·토큰량과 같은 레코드에 저장해야 "어떤 최적화가 실제로 생성
+    시간을 줄였는지" 사후 비교가 가능하다.
     """
     entry = {
         "timestamp": datetime.now(KST).isoformat(),
@@ -51,6 +54,7 @@ def log_token_usage(document_type, user_id, usage):
         "output_tokens": usage.output_tokens,
         "cache_creation_input_tokens": usage.cache_creation_input_tokens,
         "cache_read_input_tokens": usage.cache_read_input_tokens,
+        "generation_seconds": generation_seconds,
     }
     with _token_usage_lock:
         with open(TOKEN_USAGE_LOG_PATH, "a", encoding="utf-8") as f:

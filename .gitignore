@@ -19,3 +19,7 @@ data/
 
 # Notion onboarding (local only)
 .notion/
+
+# 온디맨드 테스트 스크립트가 생성하는 산출물 (코드 아님, 커밋 대상 아님)
+ab_test_results_*.jsonl
+hwpx_poc_output.hwpx
