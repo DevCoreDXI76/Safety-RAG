@@ -13,6 +13,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import TOKEN_USAGE_LOG_PATH
 from api.cost_alert import _entry_cost_usd
 from api.access_control import get_allowed_users
+from api.telegram_auth import AUTH_FAILURE_LOG_PATH
+
+AUTH_FAILURE_REASON_LABELS = {
+    "not_allowed": "미승인(/start 필요)",
+    "invalid_signature": "서명 검증 실패(텔레그램 밖에서 접속했을 가능성)",
+}
 
 
 def build_stats_message():
@@ -54,5 +60,24 @@ def build_stats_message():
             label = f"{username} (id: {uid})" if username else f"id: {uid}"
             doc_summary = ", ".join(f"{k} {v}건" for k, v in data["doc_types"].items())
             lines.append(f"- {label}: {data['count']}건 (${data['cost']:.2f}) — {doc_summary}")
+
+    return "\n".join(lines)
+
+
+def build_authlog_message(limit=20):
+    """최근 인증 실패(401/403) 내역 — Railway 서버 로그를 직접 조회하지 않고도
+    '누가·왜 거부됐는지' 확인하기 위한 용도."""
+    if not os.path.exists(AUTH_FAILURE_LOG_PATH):
+        return "🔒 인증 실패 로그\n(기록 없음)"
+
+    with open(AUTH_FAILURE_LOG_PATH, "r", encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    recent = entries[-limit:]
+    lines = [f"🔒 인증 실패 로그 (최근 {len(recent)}건, 전체 {len(entries)}건)"]
+    for e in reversed(recent):
+        reason_label = AUTH_FAILURE_REASON_LABELS.get(e["reason"], e["reason"])
+        who = e.get("username") or f"id: {e.get('user_id')}"
+        lines.append(f"- {e['timestamp']} | {who} | {reason_label}")
 
     return "\n".join(lines)

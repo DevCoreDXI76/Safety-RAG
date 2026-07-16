@@ -426,12 +426,37 @@
   async function loadDocumentTypes() {
     try {
       const res = await apiFetch("/document-types");
+      if (!res.ok) {
+        showLoadError(res);
+        return;
+      }
       const data = await res.json();
       state.documentTypes = data.document_types;
       renderTypeGrid();
     } catch (e) {
       $("type-grid").innerHTML = `<div class="error-box">문서종류를 불러오지 못했습니다. 백엔드(FastAPI)가 실행 중인지 확인하세요.</div>`;
     }
+  }
+
+  // 401(텔레그램 밖 접속)/403(미승인·승인 대기)은 원인이 명확한 상황이라,
+  // 백엔드가 보낸 안내 문구를 그대로 보여준다. 그 외에는 기존 범용 문구 유지.
+  async function showLoadError(res) {
+    let detail = "";
+    try {
+      detail = (await res.json()).detail || "";
+    } catch (e) {
+      // 응답 본문이 JSON이 아닌 경우 detail 없이 진행
+    }
+
+    let message;
+    if (res.status === 401) {
+      message = "텔레그램 앱을 통해 접속해주세요. (브라우저에서 링크를 직접 열면 사용할 수 없습니다)";
+    } else if (res.status === 403) {
+      message = detail || "사용 승인 대기 중입니다. 관리자 승인 후 다시 시도해주세요.";
+    } else {
+      message = "문서종류를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
+    }
+    $("type-grid").innerHTML = `<div class="error-box">${escapeHtml(message)}</div>`;
   }
 
   function renderTypeGrid() {

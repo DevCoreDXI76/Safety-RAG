@@ -7,18 +7,18 @@ from api.access_control import (
     ADMIN_TELEGRAM_USER_ID,
     is_allowed,
     is_pending,
-    add_pending_request,
+    register_pending_request,
     add_allowed_user,
     remove_pending_request,
     get_pending_request,
+    remove_allowed_user,
 )
 from api.telegram_bot import (
     send_message,
     edit_message_text,
     answer_callback_query,
-    approve_reject_keyboard,
 )
-from api.admin_stats import build_stats_message
+from api.admin_stats import build_stats_message, build_authlog_message
 
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 
@@ -55,6 +55,18 @@ def _handle_message(message):
         send_message(chat_id, build_stats_message())
         return
 
+    if text == "/authlog":
+        if user_id != ADMIN_TELEGRAM_USER_ID:
+            return
+        send_message(chat_id, build_authlog_message())
+        return
+
+    if text.startswith("/revoke"):
+        if user_id != ADMIN_TELEGRAM_USER_ID:
+            return
+        _handle_revoke_command(chat_id, text)
+        return
+
     if text != "/start":
         return
 
@@ -66,16 +78,22 @@ def _handle_message(message):
         send_message(chat_id, "사용 신청이 이미 접수되어 승인 대기 중입니다.")
         return
 
-    add_pending_request(user_id, username=user.get("username"), first_name=user.get("first_name"))
-    send_message(chat_id, "사용 신청이 접수되었습니다. 관리자 승인 후 이용 가능합니다.")
+    register_pending_request(user_id, username=user.get("username"), first_name=user.get("first_name"))
 
-    if ADMIN_TELEGRAM_USER_ID:
-        name = user.get("username") or user.get("first_name") or str(user_id)
-        send_message(
-            ADMIN_TELEGRAM_USER_ID,
-            f"📩 새 사용 신청: {name} (id: {user_id})",
-            reply_markup=approve_reject_keyboard(user_id),
-        )
+
+def _handle_revoke_command(chat_id, text):
+    """"/revoke <user_id>" — 승인 취소. 대상 user_id는 /stats 조회 결과에서 확인 가능."""
+    parts = text.split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        send_message(chat_id, "사용법: /revoke <user_id>\n(user_id는 /stats로 확인)")
+        return
+
+    user_id = int(parts[1])
+    if remove_allowed_user(user_id):
+        send_message(chat_id, f"✅ 승인 취소 완료 (id: {user_id})")
+        send_message(user_id, "이용 승인이 취소되었습니다. 다시 이용하시려면 /start로 재신청해주세요.")
+    else:
+        send_message(chat_id, f"승인 목록에 없는 id입니다: {user_id}")
 
 
 def _handle_callback_query(callback_query):
