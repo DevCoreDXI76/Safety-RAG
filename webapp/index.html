@@ -179,6 +179,30 @@
     white-space: nowrap;
   }
 
+  .order-guide-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    font-size: 12.5px;
+    color: var(--ink);
+  }
+  .order-guide-banner p { margin: 0; flex: 1; line-height: 1.5; }
+  .order-guide-banner button {
+    background: transparent;
+    color: var(--accent);
+    border: none;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
   /* 문서종류 선택 카드 */
   .type-grid {
     display: grid;
@@ -340,6 +364,10 @@
   <section class="card">
     <h2>문서 종류</h2>
     <p class="hint">생성할 문서를 선택하세요.</p>
+    <div class="order-guide-banner" id="order-guide-banner">
+      <p><strong>순서 안내:</strong> 위험성평가표 → 표준 작업계획서 → TBM일지 순으로 만들면, 앞서 만든 문서 내용이 다음 문서에 자동으로 이어서 반영됩니다.</p>
+      <button id="btn-dismiss-order-guide" aria-label="안내 닫기">닫기</button>
+    </div>
     <div class="type-grid" id="type-grid">
       <div class="status-line"><span class="spinner"></span> 불러오는 중...</div>
     </div>
@@ -727,6 +755,20 @@
     }
   }
 
+  const ORDER_GUIDE_DISMISS_KEY = "safety_rag_order_guide_dismissed";
+
+  // 순서 안내 배너: 한 번 닫으면 이 브라우저에서는 다시 보이지 않는다.
+  function initOrderGuideBanner() {
+    if (localStorage.getItem(ORDER_GUIDE_DISMISS_KEY) === "1") {
+      $("order-guide-banner").style.display = "none";
+      return;
+    }
+    $("btn-dismiss-order-guide").addEventListener("click", () => {
+      localStorage.setItem(ORDER_GUIDE_DISMISS_KEY, "1");
+      $("order-guide-banner").style.display = "none";
+    });
+  }
+
   function showError(msg) {
     $("error-box").textContent = msg;
     $("error-box").style.display = "block";
@@ -829,6 +871,7 @@ if (window.Telegram && window.Telegram.WebApp) {
   tg.expand();       // 화면을 최대 높이로 펼침 (반쯤 열린 상태 방지)
 }
 
+  initOrderGuideBanner();
   loadDocumentTypes();
 </script>
 
