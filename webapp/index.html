@@ -746,15 +746,47 @@
     }
   }
 
+  // 텔레그램 인앱 WebView 등에서는 navigator.clipboard.writeText()가 권한/보안
+  // 컨텍스트 문제로 조용히 실패할 수 있다(베타0 "자동전송 실패" 피드백의 원인으로 추정).
+  // execCommand("copy") 폴백을 두고, 성공/실패를 버튼 텍스트로 명확히 알린다.
+  async function copyResultText() {
+    const text = (state.lastRawMarkdown != null) ? state.lastRawMarkdown : $("result-body").innerText;
+    let succeeded = false;
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        succeeded = true;
+      }
+    } catch (e) {
+      succeeded = false;
+    }
+
+    if (!succeeded) {
+      const fallback = document.createElement("textarea");
+      fallback.value = text;
+      fallback.style.position = "fixed";
+      fallback.style.opacity = "0";
+      document.body.appendChild(fallback);
+      fallback.focus();
+      fallback.select();
+      try {
+        succeeded = document.execCommand("copy");
+      } catch (e2) {
+        succeeded = false;
+      }
+      document.body.removeChild(fallback);
+    }
+
+    $("btn-copy").textContent = succeeded ? "복사됨" : "복사 실패 (직접 선택해 복사하세요)";
+    setTimeout(() => { $("btn-copy").textContent = "복사"; }, 1500);
+  }
+
   // ---- 이벤트 바인딩 ----
   $("btn-lookup").addEventListener("click", lookupProject);
   $("btn-generate").addEventListener("click", generateDraft);
   $("btn-download-xlsx").addEventListener("click", downloadXlsx);
-  $("btn-copy").addEventListener("click", () => {
-    navigator.clipboard.writeText($("result-body").innerText);
-    $("btn-copy").textContent = "복사됨";
-    setTimeout(() => { $("btn-copy").textContent = "복사"; }, 1500);
-  });
+  $("btn-copy").addEventListener("click", copyResultText);
 
   // 텔레그램 미니앱 초기화 — 텔레그램 안에서 열렸을 때만 동작, 브라우저 단독 실행 시엔 무시됨
 if (window.Telegram && window.Telegram.WebApp) {
