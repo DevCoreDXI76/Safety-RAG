@@ -2,9 +2,10 @@
 
 import json
 from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 import sys
 import os
+from urllib.parse import quote
 
 # 프로젝트 루트의 generate_draft.py, common.py를 import하기 위한 경로 추가
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,6 +17,7 @@ from generate_draft import (
     get_record_by_id,
     generate_document_draft_stream,
 )
+from export_xlsx import record_to_xlsx_bytes
 from api.schemas import (
     DocumentTypesResponse,
     DocumentTypeItem,
@@ -100,3 +102,22 @@ def generate(req: GenerateRequest, telegram_user: dict = Depends(require_telegra
             yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/projects/{project_name}/records/{record_id}/export.xlsx")
+def export_record_xlsx(project_name: str, record_id: str, telegram_user: dict = Depends(require_telegram_auth)):
+    """저장된 기록 하나를 xlsx로 내보낸다. draft 안의 Markdown 표만 파싱되고, 표가 아닌 서술 텍스트는 그대로 A1에 담긴다."""
+    user_id = telegram_user["user_id"]
+    record = get_record_by_id(user_id, project_name, record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="지정한 기록을 찾을 수 없습니다.")
+
+    xlsx_bytes = record_to_xlsx_bytes(record)
+    filename = f"{project_name}_{record['document_type']}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"export.xlsx\"; filename*=UTF-8''{quote(filename)}",
+        },
+    )
