@@ -271,6 +271,14 @@
     color: var(--ink-soft);
   }
 
+  #result-edit {
+    width: 100%;
+    min-height: 260px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+
   .status-line {
     font-size: 12.5px;
     color: var(--ink-soft);
@@ -369,9 +377,11 @@
     <div class="result-meta">
       <span id="meta-record-id">record: —</span>
       <button class="btn-secondary" id="btn-download-xlsx" style="padding:5px 10px; font-size:11.5px;">엑셀 다운로드</button>
+      <button class="btn-secondary" id="btn-edit" style="padding:5px 10px; font-size:11.5px;">편집</button>
       <button class="btn-secondary" id="btn-copy" style="padding:5px 10px; font-size:11.5px;">복사</button>
     </div>
     <div class="result-body" id="result-body"></div>
+    <textarea id="result-edit" style="display:none;"></textarea>
   </section>
 
 </main>
@@ -402,6 +412,7 @@
     selectedWorkType: null,
     lastRecordId: null,
     lastProjectName: null,
+    lastRawMarkdown: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -707,6 +718,7 @@
           $("meta-record-id").textContent = `record: ${event.saved_record_id || "미저장 (현장명 없음)"}`;
           state.lastRecordId = event.saved_record_id || null;
           state.lastProjectName = projectName;
+          state.lastRawMarkdown = accumulatedText;
           if (projectName) lookupProject();
         } else if (event.type === "error") {
           throw new Error(event.message);
@@ -782,10 +794,32 @@
     setTimeout(() => { $("btn-copy").textContent = "복사"; }, 1500);
   }
 
+  let resultEditing = false;
+
+  // "편집" 클릭 시 렌더링된 결과를 숨기고 원본 Markdown을 담은 textarea를 보여준다.
+  // 다시 클릭하면 textarea 내용을 state.lastRawMarkdown에 반영하고 미리보기로 되돌아간다.
+  // 서버에 저장된 레코드는 수정하지 않는다 — 복사/화면 표시에만 반영되는 로컬 편집이다.
+  function toggleEdit() {
+    resultEditing = !resultEditing;
+    if (resultEditing) {
+      $("result-edit").value = state.lastRawMarkdown || "";
+      $("result-body").style.display = "none";
+      $("result-edit").style.display = "block";
+      $("btn-edit").textContent = "미리보기";
+    } else {
+      state.lastRawMarkdown = $("result-edit").value;
+      $("result-body").innerHTML = marked.parse(state.lastRawMarkdown);
+      $("result-body").style.display = "block";
+      $("result-edit").style.display = "none";
+      $("btn-edit").textContent = "편집";
+    }
+  }
+
   // ---- 이벤트 바인딩 ----
   $("btn-lookup").addEventListener("click", lookupProject);
   $("btn-generate").addEventListener("click", generateDraft);
   $("btn-download-xlsx").addEventListener("click", downloadXlsx);
+  $("btn-edit").addEventListener("click", toggleEdit);
   $("btn-copy").addEventListener("click", copyResultText);
 
   // 텔레그램 미니앱 초기화 — 텔레그램 안에서 열렸을 때만 동작, 브라우저 단독 실행 시엔 무시됨
