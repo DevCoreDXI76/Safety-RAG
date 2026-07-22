@@ -203,6 +203,16 @@
     flex-shrink: 0;
   }
 
+  .order-guide-cta {
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 14px;
+    font-size: 13px;
+  }
+  .order-guide-cta p { margin: 0 0 8px; line-height: 1.5; }
+
   /* 문서종류 선택 카드 */
   .type-grid {
     display: grid;
@@ -748,6 +758,9 @@
           state.lastProjectName = projectName;
           state.lastRawMarkdown = accumulatedText;
           if (projectName) lookupProject();
+          if (state.selectedTypeLabel === "위험성평가표" && event.saved_record_id) {
+            offerNextDocumentCta();
+          }
         } else if (event.type === "error") {
           throw new Error(event.message);
         }
@@ -855,6 +868,32 @@
       $("result-edit").style.display = "none";
       $("btn-edit").textContent = "편집";
     }
+  }
+
+  // 위험성평가표 생성 직후에만 노출: 표준 작업계획서를 선택하면
+  // loadRiskAssessments()의 기존 "최신 회차 자동 선택" 로직이 방금 만든
+  // 위험성평가표를 그대로 골라주므로, 여기서는 문서종류만 바꿔주면 된다.
+  function offerNextDocumentCta() {
+    const existing = document.getElementById("order-guide-cta");
+    if (existing) existing.remove();
+
+    const workPlanType = state.documentTypes.find((t) => t.label === "표준 작업계획서");
+    if (!workPlanType) return;
+
+    const cta = document.createElement("div");
+    cta.className = "order-guide-cta";
+    cta.id = "order-guide-cta";
+    cta.innerHTML = `
+      <p>이 위험성평가표 내용을 이어서, <strong>표준 작업계획서</strong>도 바로 만들어볼까요?</p>
+      <button class="btn-secondary" id="btn-next-doc-cta">표준 작업계획서 이어서 만들기</button>
+    `;
+    $("result-section").appendChild(cta);
+
+    document.getElementById("btn-next-doc-cta").addEventListener("click", () => {
+      cta.remove();
+      selectDocumentType(workPlanType.id, workPlanType.label);
+      $("worktype-section").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   // ---- 이벤트 바인딩 ----
