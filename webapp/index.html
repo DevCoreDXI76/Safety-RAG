@@ -368,6 +368,7 @@
     <h2>생성 결과</h2>
     <div class="result-meta">
       <span id="meta-record-id">record: —</span>
+      <button class="btn-secondary" id="btn-download-xlsx" style="padding:5px 10px; font-size:11.5px;">엑셀 다운로드</button>
       <button class="btn-secondary" id="btn-copy" style="padding:5px 10px; font-size:11.5px;">복사</button>
     </div>
     <div class="result-body" id="result-body"></div>
@@ -399,6 +400,8 @@
     selectedRiskId: null,
     projectRecords: [],
     selectedWorkType: null,
+    lastRecordId: null,
+    lastProjectName: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -702,6 +705,8 @@
         } else if (event.type === "done") {
           $("result-body").innerHTML = marked.parse(accumulatedText);
           $("meta-record-id").textContent = `record: ${event.saved_record_id || "미저장 (현장명 없음)"}`;
+          state.lastRecordId = event.saved_record_id || null;
+          state.lastProjectName = projectName;
           if (projectName) lookupProject();
         } else if (event.type === "error") {
           throw new Error(event.message);
@@ -715,9 +720,36 @@
     $("error-box").style.display = "block";
   }
 
+  async function downloadXlsx() {
+    if (!state.lastRecordId || !state.lastProjectName) {
+      showError("현장명을 입력하고 생성해야 엑셀로 내려받을 수 있습니다.");
+      return;
+    }
+    $("btn-download-xlsx").disabled = true;
+    try {
+      const path = `/projects/${encodeURIComponent(state.lastProjectName)}/records/${encodeURIComponent(state.lastRecordId)}/export.xlsx`;
+      const res = await apiFetch(path);
+      if (!res.ok) throw new Error("엑셀 파일을 만들지 못했습니다.");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${state.lastProjectName}_${state.selectedTypeLabel || "문서"}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      $("btn-download-xlsx").disabled = false;
+    }
+  }
+
   // ---- 이벤트 바인딩 ----
   $("btn-lookup").addEventListener("click", lookupProject);
   $("btn-generate").addEventListener("click", generateDraft);
+  $("btn-download-xlsx").addEventListener("click", downloadXlsx);
   $("btn-copy").addEventListener("click", () => {
     navigator.clipboard.writeText($("result-body").innerText);
     $("btn-copy").textContent = "복사됨";
