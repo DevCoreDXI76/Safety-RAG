@@ -451,6 +451,7 @@
     lastRecordId: null,
     lastProjectName: null,
     lastRawMarkdown: null,
+    lastDocLabel: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -757,6 +758,7 @@
           state.lastRecordId = event.saved_record_id || null;
           state.lastProjectName = projectName;
           state.lastRawMarkdown = accumulatedText;
+          state.lastDocLabel = state.selectedTypeLabel;
           if (projectName) lookupProject();
           if (state.selectedTypeLabel === "위험성평가표" && event.saved_record_id) {
             offerNextDocumentCta();
@@ -801,7 +803,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${state.lastProjectName}_${state.selectedTypeLabel || "문서"}.xlsx`;
+      a.download = `${state.lastProjectName}_${state.lastDocLabel || "문서"}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
