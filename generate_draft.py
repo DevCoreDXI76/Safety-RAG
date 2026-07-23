@@ -180,6 +180,15 @@ def show_project_summary(user_id, project_name):
         print(f"  - {r['created_at']} | {r['document_type']} | {r['project_info'][:40]}...")
     print()
 
+def _display_project_name(project_name):
+    """
+    현장명을 문서 본문(현장명 항목)에 넣기 전 표시용으로 다듬는다.
+    실제 project_name(파일 조회 키, 예: '송파지사_국사전원')은 그대로 두고
+    이 함수의 반환값만 프롬프트에 노출해, 문서에는 '송파지사 국사전원'처럼
+    언더스코어 없이 보이게 한다.
+    """
+    return project_name.replace("_", " ")
+
 def _build_generation_prompt(document_type, project_info, project_name=None, risk_assessment_record=None, work_type=None):
     """
     system_prompt/user_prompt 조립 로직 (동기 generate_document_draft와
@@ -252,7 +261,7 @@ def _build_generation_prompt(document_type, project_info, project_name=None, ris
         )
 
     # 현장명이 있으면 문서 내용에 실제로 반영되도록 명시적으로 전달
-    site_line = f"현장명: {project_name}\n" if project_name else ""
+    site_line = f"현장명: {_display_project_name(project_name)}\n" if project_name else ""
     work_type_line = f"작업유형: {work_type}\n" if is_work_plan_with_type else ""
 
     system_prompt = (
