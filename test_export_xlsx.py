@@ -34,6 +34,18 @@ SAMPLE_RECORD_NO_TABLE = {
     "created_at": "2026-07-22 10:00:00",
 }
 
+SAMPLE_RECORD_WITH_SCORE = {
+    "id": "score1",
+    "document_type": "위험성평가표",
+    "project_info": "테스트용 점수 셀",
+    "draft": (
+        "| 위험요인 | 가능성 | 중대성 | 위험성 |\n"
+        "|----------|--------|--------|--------|\n"
+        "| 지게차 충돌 | 3(AI 제안값, 현장 확인 필수) | 5(AI 제안값, 현장 확인 필수) | 15(AI 제안값, 현장 확인 필수) |\n"
+    ),
+    "created_at": "2026-07-22 10:00:00",
+}
+
 
 def run():
     results = []
@@ -61,6 +73,28 @@ def run():
     wb2 = load_workbook(io.BytesIO(xlsx_bytes_empty))
     ws2 = wb2.active
     results.append(("표 없는 문서는 원문 텍스트를 A1에 기록", ws2.cell(row=1, column=1).value == "이 문서에는 표가 없습니다."))
+
+    xlsx_bytes_score = record_to_xlsx_bytes(SAMPLE_RECORD_WITH_SCORE)
+    wb3 = load_workbook(io.BytesIO(xlsx_bytes_score))
+    ws3 = wb3.active
+
+    results.append((
+        "AI 제안값 점수 셀이 순수 숫자로 저장됨",
+        ws3.cell(row=2, column=2).value == 3
+        and ws3.cell(row=2, column=3).value == 5
+        and ws3.cell(row=2, column=4).value == 15
+        and isinstance(ws3.cell(row=2, column=4).value, int),
+    ))
+    results.append((
+        "AI 제안값 안내 문구는 셀 메모(comment)로 보존됨",
+        ws3.cell(row=2, column=4).comment is not None
+        and "AI 제안값" in ws3.cell(row=2, column=4).comment.text,
+    ))
+    results.append((
+        "점수가 아닌 일반 텍스트 셀은 그대로 문자열 유지",
+        ws3.cell(row=2, column=1).value == "지게차 충돌"
+        and ws3.cell(row=2, column=1).comment is None,
+    ))
 
     all_ok = True
     for name, ok in results:
