@@ -19,6 +19,8 @@ with open("generate_draft.py", "r", encoding="utf-8") as f:
 EXPECTED_PHRASES = [
     "이격거리·간격 등 안전거리 수치를 다룰 때도",
     "현장 실측 후 확보",
+    "'전원'이라는 표현 대신 '전체 인원'이라고 명확히 써",
+    "전원(電源, 전기 공급)이라는 뜻으로도 쓰여서",
 ]
 
 
