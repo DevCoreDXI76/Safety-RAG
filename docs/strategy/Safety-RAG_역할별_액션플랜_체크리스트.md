@@ -163,37 +163,38 @@
 27. 🆕 문서유형별 실측 API 원가를 토큰 로깅(A-5)으로 확보 — 영남권 리서치의 "건당 10원" 추정치는 Haiku 처리 문서(TBM일지 등)엔 맞지만 Sonnet 처리 문서(위험성평가표 등, 출력 토큰이 많아 약 50~60원 추정)엔 낙관적이므로, 추정치가 아닌 실측치로 기획자 역할의 요금제 확정을 지원
 
 ### ✅ 체크리스트
-*(2026-07-21: 로컬 코드베이스 + git log 직접 확인 후 상태 반영. 근거 없이 체크한 항목은 없습니다 — 모두 파일/커밋으로 확인.)*
-- [x] Anthropic 정식 API 키 발급 — `.env`에 `ANTHROPIC_API_KEY` 키 존재 확인 (값은 미확인, 구조상 정상)
-- [x] Railway Variables 등록 및 분리 확인 — `Procfile` 존재, webapp이 실제 Railway 프로덕션 URL 호출 중으로 간접 확인
-- [x] 구세대 모델 ID 전수 교체 완료 — `generate_draft.py`에서 `claude-sonnet-5`, `claude-haiku-4-5-20251001` 확인, 구세대 ID 미검출
-- [x] `cache_control` + TTL(1시간) 적용 완료 — `generate_draft.py`에 `cache_control: {"type": "ephemeral", "ttl": "1h"}` 확인
-- [x] 토큰 사용량 로깅 구현 — **단, DB 테이블이 아니라 `token_usage_log.jsonl` 로그 파일 방식으로 구현됨** (기능은 동일: input/output/cache 토큰, 문서유형 기록). 원래 계획(DB 테이블)과 실제 구현이 다르다는 점 인지 필요
-- [x] 일일 비용 알림 로직 구현 — `api/cost_alert.py`, 임계치 초과 시 텔레그램 알림. 현재는 전체 합산 기준(사용자별 아님)
-- [x] 지게차 작업유형 코드 레벨 게이팅 구현 — git 커밋 `4fe1402`(차량계 하역운반기계 work_type 승격), `common.py`에 법정 별표 인용 섹션 확인
-- [x] Haiku A/B 테스트 하네스 구축 — `test_haiku_ab.py` 확인
-- [x] A/B 테스트 실행 및 결과 비교 완료 — `ab_test_results_20260716_*.jsonl` 2개 파일(약 19KB, 249KB) 실데이터 확인. 정확히 20~30건인지는 파일을 열어 세어보지 않아 미확인
-- [ ] 회원가입/로그인 시스템 구현 — `api/` 폴더에 텔레그램 인증(`telegram_auth.py`)만 존재, 웹 회원가입/로그인 파일 없음
-- [ ] PG 연동 및 webhook 검증 로직 구현 — 관련 파일 없음
-- [ ] 크레딧/구독 DB 스키마 구현 — 관련 파일 없음
-- [~] 요금제별 기능 제한/레이트리밋 로직 구현 — `api/rate_limit.py` 존재하나 기존 KST 자정 리셋 일일 제한으로 보이며, 크레딧/구독 요금제 기반 제한은 아직 아닐 가능성 (크레딧 DB 자체가 없어서) — **부분 완료로 표시, 다음 세션에서 내용 확인 필요**
-- [x] python-hwpx PoC 완료 — `test_hwpx_poc.py` + `hwpx_poc_output.hwpx` 샘플 파일 실존, python-hwpx 3.0.0 검증 완료
-- [x] openpyxl 기반 XLSX 템플릿 바인딩 구현 — **완료** (git `406028c` 등, `export_xlsx.py` + 다운로드 API/버튼까지 구현·QA 완료 확인, 2026-07-27 커밋 이력 대조로 체크 갱신)
-- [ ] HWPX 내보내기 구현 (실제 서비스 반영) — 🔄 XLSX 다음 순서로 조정, PoC만 완료, 실제 문서 생성 파이프라인 통합은 미확인
-- [ ] PDF 내보내기 구현 — `requirements.txt`에 관련 라이브러리 없음, 미착수
-- [ ] 🆕 베타 폼 버그 수정(자동전송/다운로드/편집) 완료 — 2026-07-22 베타0 피드백에서 확인
-- [x] 🆕 순서 안내 인앱 UI 구현 완료 — **완료** (git `60caf56` 생성 순서 안내 배너, `63f6645` 이어 만들기 CTA, 2026-07-27 커밋 이력 대조로 체크 갱신)
-- [x] 🆕 XLSX 실물 QA 3건 수정 완료 (현장명 언더스코어, 위험성 점수 텍스트→숫자, "담당" 열 "전원" 문구) — **2026-07-23 재테스트로 3건 전부 반영 확인**
-- [x] 🆕 작업유형(법정 분류) 오류 의심 확인·수정 — **완료 (2026-07-27)**: 근본 원인은 분류 로직이 아니라 웹앱에서 사람이 직접 작업유형을 선택하는 구조인데 "차량계 하역운반기계등" 항목의 UI 부제·KB 설명 어디에도 고소작업대/버킷트럭 예시가 없어 사용자가 "차량계 건설기계"를 잘못 고른 것. `webapp/index.html` 부제에 "고소작업대(버킷트럭)" 추가 + `knowledge_base/표준작업계획서_법정별표.txt`에 제186조 근거 구분 문구 추가(굴착작업 맨홀/밀폐공간 건과 동일 패턴), 임베딩 재빌드 완료, `test_worktype_citations.py --repeat 4` 4/4 통과로 회귀 없음 확인
-- [x] 🆕 XLSX 서식(스타일) 개선 — **완료** (git `558d5a5`, 5종 문서 서식목업 실측 반영: 열너비/줄바꿈/테두리/조건부서식/인쇄설정, 2026-07-27 커밋 이력 대조로 체크 갱신)
-- [ ] dev/prod 환경변수 분리 완료 — **미완료 확인**: `webapp/index.html`에 `API_BASE`가 Railway 프로덕션 URL로 하드코딩되어 있음
-- [ ] 에러 모니터링 도구 연동 여부 결정 — `requirements.txt`에 Sentry 등 없음
-- [x] 문서유형별 프롬프트 출력 길이 다이어트 완료 — git 커밋 `9fa48a4`("생성시간 로깅, 출력 다이어트, Haiku A/B, HWPX PoC")로 확인
-- [x] Haiku 전환 문서유형 실배포 완료 — `generate_draft.py`에서 안전보건교육일지가 이미 Haiku 4.5로 라우팅되는 것 확인
-- [x] 문서유형별 생성 시간 로깅 추가 — 위 커밋 `9fa48a4`에 포함
-- [x] 🔄 스트리밍(SSE) 백엔드 구현 — **완료, 그것도 훨씬 이전(2026-07-11, 체크리스트 작성일보다 빠름)**. `api/routes.py`에서 `StreamingResponse` + `text/event-stream` 확인. 원래 "8주 로드맵 이후" 우선순위였는데 실제로는 가장 먼저 구현됨 — 계획과 실행 순서가 어긋난 사례, Notion에도 반영함
-- [x] 🔄 완전 스트리밍 vs 부분 버퍼링 방식 결정 및 프론트엔드 반영 — **완료 (2026-07-11)**. git 커밋 메시지로 "완전 스트리밍"(스트림 종료 후 사후 인용 검증) 방식으로 결정됐음을 확인
-- [ ] 문서유형별 실측 API 원가 데이터 기획자 역할에 전달
+*(2026-07-21: 로컬 코드베이스 + git log 직접 확인 후 상태 반영. 근거 없이 체크한 항목은 없습니다 — 모두 파일/커밋으로 확인. 2026-07-27: Notion "액션플랜-8주" DB에 개발자 역할 항목별 카드 30개가 이미 존재함을 확인 — PM 섹션과 동일하게 항목별 링크를 아래에 추가하고, 최근 커밋 이력과 대조해 5건의 상태를 갱신 + 누락 1건을 신규 카드로 추가했습니다.)*
+- [x] Anthropic 정식 API 키 발급 — `.env`에 `ANTHROPIC_API_KEY` 키 존재 확인 (값은 미확인, 구조상 정상) ([링크](https://app.notion.com/39d66ca4297680cdbe0feca658f1a6a7))
+- [x] Railway Variables 등록 및 분리 확인 — `Procfile` 존재, webapp이 실제 Railway 프로덕션 URL 호출 중으로 간접 확인 ([링크](https://app.notion.com/39d66ca4297680cbae0dde1966533dde))
+- [x] 구세대 모델 ID 전수 교체 완료 — `generate_draft.py`에서 `claude-sonnet-5`, `claude-haiku-4-5-20251001` 확인, 구세대 ID 미검출 ([링크](https://app.notion.com/39d66ca429768031a622cb6c206b13fc))
+- [x] `cache_control` + TTL(1시간) 적용 완료 — `generate_draft.py`에 `cache_control: {"type": "ephemeral", "ttl": "1h"}` 확인 ([링크](https://app.notion.com/39d66ca4297680e998a7e88b612834ae))
+- [x] 토큰 사용량 로깅 구현 — **단, DB 테이블이 아니라 `token_usage_log.jsonl` 로그 파일 방식으로 구현됨** (기능은 동일: input/output/cache 토큰, 문서유형 기록). 원래 계획(DB 테이블)과 실제 구현이 다르다는 점 인지 필요 ([링크](https://app.notion.com/39d66ca4297680c392fdd0cb7dec5971))
+- [x] 일일 비용 알림 로직 구현 — `api/cost_alert.py`, 임계치 초과 시 텔레그램 알림. 현재는 전체 합산 기준(사용자별 아님) ([링크](https://app.notion.com/39d66ca4297680cc96c2ebf1245d1be9))
+- [x] 지게차 작업유형 코드 레벨 게이팅 구현 — git 커밋 `4fe1402`(차량계 하역운반기계 work_type 승격), `common.py`에 법정 별표 인용 섹션 확인 ([링크](https://app.notion.com/39d66ca429768041bd79e8e88da1a7a1))
+- [x] Haiku A/B 테스트 하네스 구축 — `test_haiku_ab.py` 확인 ([링크](https://app.notion.com/39d66ca4297680af813ed995576d71de))
+- [x] A/B 테스트 실행 및 결과 비교 완료 — `ab_test_results_20260716_*.jsonl` 2개 파일(약 19KB, 249KB) 실데이터 확인. 정확히 20~30건인지는 파일을 열어 세어보지 않아 미확인 ([링크](https://app.notion.com/39d66ca4297680b7bf27ef765f7b0455))
+- [ ] 회원가입/로그인 시스템 구현 — `api/` 폴더에 텔레그램 인증(`telegram_auth.py`)만 존재, 웹 회원가입/로그인 파일 없음 ([링크](https://app.notion.com/39d66ca4297680e0a72cc287057e3377))
+- [ ] PG 연동 및 webhook 검증 로직 구현 — 관련 파일 없음 ([링크](https://app.notion.com/39d66ca4297680f1bbbbfcae920b3af7))
+- [ ] 크레딧/구독 DB 스키마 구현 — 관련 파일 없음 ([링크](https://app.notion.com/39d66ca4297680d0a889ea4fbed13a62))
+- [~] 요금제별 기능 제한/레이트리밋 로직 구현 — `api/rate_limit.py` 존재하나 기존 KST 자정 리셋 일일 제한으로 보이며, 크레딧/구독 요금제 기반 제한은 아직 아닐 가능성 (크레딧 DB 자체가 없어서) — **부분 완료로 표시, 다음 세션에서 내용 확인 필요** ([링크](https://app.notion.com/39d66ca42976808f8a56cfe0b87e73df))
+- [x] python-hwpx PoC 완료 — `test_hwpx_poc.py` + `hwpx_poc_output.hwpx` 샘플 파일 실존, python-hwpx 3.0.0 검증 완료 ([링크](https://app.notion.com/39d66ca429768036b356ebf53f65a833))
+- [x] openpyxl 기반 XLSX 템플릿 바인딩 구현 — **완료** (git `406028c` 등, `export_xlsx.py` + 다운로드 API/버튼까지 구현·QA 완료 확인, 2026-07-27 커밋 이력 대조로 체크 갱신, Notion 상태도 완료로 갱신) ([링크](https://app.notion.com/39d66ca42976809a8e4bd92d9c7c9919))
+- [ ] HWPX 내보내기 구현 (실제 서비스 반영) — 🔄 XLSX 다음 순서로 조정, PoC만 완료, 실제 문서 생성 파이프라인 통합은 미확인 ([링크](https://app.notion.com/39d66ca42976801791c1e5c136d22e16))
+- [x] 🆕 XLSX 내보내기 우선순위 상향 반영 완료 — **완료**: XLSX가 실제로 HWPX보다 먼저 구현·QA까지 끝나 우선순위 재배치가 그대로 이행됨, Notion 상태도 완료로 갱신 ([링크](https://app.notion.com/3a566ca4297681bdb2bde458ce526ef0))
+- [ ] PDF 내보내기 구현 — `requirements.txt`에 관련 라이브러리 없음, 미착수 ([링크](https://app.notion.com/39d66ca4297680de8fbbe444c2a37ae4))
+- [ ] 🆕 베타 폼 버그 수정(자동전송/다운로드/편집) 완료 — 2026-07-22 베타0 피드백에서 확인 ([링크](https://app.notion.com/3a566ca4297681428affd5d8a036ea65))
+- [x] 🆕 순서 안내 인앱 UI 구현 완료 — **완료** (git `60caf56` 생성 순서 안내 배너, `63f6645` 이어 만들기 CTA, 2026-07-27 커밋 이력 대조로 체크 갱신, Notion 상태도 완료로 갱신) ([링크](https://app.notion.com/3a566ca4297681368e2ddb56912cadb7))
+- [x] 🆕 XLSX 실물 QA 3건 수정 완료 (현장명 언더스코어, 위험성 점수 텍스트→숫자, "담당" 열 "전원" 문구) — **2026-07-23 재테스트로 3건 전부 반영 확인** ([링크](https://app.notion.com/3a666ca42976817394e3d4c6e81b45c7))
+- [x] 🆕 작업유형(법정 분류) 오류 의심 확인·수정 — **완료 (2026-07-27)**: 근본 원인은 분류 로직이 아니라 웹앱에서 사람이 직접 작업유형을 선택하는 구조인데 "차량계 하역운반기계등" 항목의 UI 부제·KB 설명 어디에도 고소작업대/버킷트럭 예시가 없어 사용자가 "차량계 건설기계"를 잘못 고른 것. `webapp/index.html` 부제에 "고소작업대(버킷트럭)" 추가 + `knowledge_base/표준작업계획서_법정별표.txt`에 제186조 근거 구분 문구 추가(굴착작업 맨홀/밀폐공간 건과 동일 패턴), 임베딩 재빌드 완료, `test_worktype_citations.py --repeat 4` 4/4 통과로 회귀 없음 확인, Notion 상태도 완료로 갱신 ([링크](https://app.notion.com/3a766ca4297681d9a8c7e3f28e8eadff))
+- [x] 🆕 XLSX 서식(스타일) 개선 — **완료** (git `558d5a5`, 5종 문서 서식목업 실측 반영: 열너비/줄바꿈/테두리/조건부서식/인쇄설정, 2026-07-27 커밋 이력 대조로 체크 갱신, Notion 상태도 완료로 갱신) ([링크](https://app.notion.com/3a766ca4297681e08b83c564e8e82923))
+- [ ] dev/prod 환경변수 분리 완료 — **미완료 확인**: `webapp/index.html`에 `API_BASE`가 Railway 프로덕션 URL로 하드코딩되어 있음 ([링크](https://app.notion.com/39d66ca429768022862edcd48656ca66))
+- [ ] 에러 모니터링 도구 연동 여부 결정 — `requirements.txt`에 Sentry 등 없음 ([링크](https://app.notion.com/39d66ca4297680d387a0dbf8410ef30e))
+- [x] 문서유형별 프롬프트 출력 길이 다이어트 완료 — git 커밋 `9fa48a4`("생성시간 로깅, 출력 다이어트, Haiku A/B, HWPX PoC")로 확인 ([링크](https://app.notion.com/39d66ca4297680d290a8f7691cc9f17c))
+- [x] Haiku 전환 문서유형 실배포 완료 — `generate_draft.py`에서 안전보건교육일지가 이미 Haiku 4.5로 라우팅되는 것 확인 ([링크](https://app.notion.com/39d66ca4297680eca333c0f530ad29a5))
+- [x] 문서유형별 생성 시간 로깅 추가 — 위 커밋 `9fa48a4`에 포함 ([링크](https://app.notion.com/39d66ca42976807ba7f7ec78ef320f91))
+- [x] 🔄 스트리밍(SSE) 백엔드 구현 — **완료, 그것도 훨씬 이전(2026-07-11, 체크리스트 작성일보다 빠름)**. `api/routes.py`에서 `StreamingResponse` + `text/event-stream` 확인. 원래 "8주 로드맵 이후" 우선순위였는데 실제로는 가장 먼저 구현됨 — 계획과 실행 순서가 어긋난 사례, Notion에도 반영함 ([링크](https://app.notion.com/39d66ca4297680f4aa82ce06aa00819f))
+- [x] 🔄 완전 스트리밍 vs 부분 버퍼링 방식 결정 및 프론트엔드 반영 — **완료 (2026-07-11)**. git 커밋 메시지로 "완전 스트리밍"(스트림 종료 후 사후 인용 검증) 방식으로 결정됐음을 확인 ([링크](https://app.notion.com/39d66ca4297680febdd6fdbedaf5ad5b))
+- [ ] 문서유형별 실측 API 원가 데이터 기획자 역할에 전달 — Notion에 신규 카드 추가함 ([링크](https://app.notion.com/3ab66ca4297681c18be8e5a8d40342c8))
 
 ---
 
