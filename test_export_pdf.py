@@ -16,20 +16,28 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import pypdf
+from reportlab.lib.pagesizes import A4, landscape
 
-from export_pdf import record_to_pdf_bytes
-from generate_draft import get_record_by_id
+from export_pdf import _build_table_element, record_to_pdf_bytes
+from markdown_tables import parse_markdown_tables
 
-TEST_USER_ID = "xlsx_export_test_user"
-TEST_PROJECT_NAME = "xlsx_export_테스트현장"
-TEST_RECORD_ID = "20c1c6d12755"
+SAMPLE_RECORD = {
+    "document_type": "위험성평가표",
+    "draft": (
+        "| 작업단계 | 유해위험요인 | 감소대책 | 위험성 |\n"
+        "|------|------|------|------|\n"
+        "| 사전조사 | 매설물 손상(가스·전력·상수도) | 매설물 관리기관 확인 및 이설·보호대책 수립, "
+        "굴착 착수 전 관계 기관(한국가스공사, 한전, 상수도사업본부 등) 협의 후 착공계 제출 | 9 |\n"
+        "| 굴착 | 토사 붕괴 | 흙막이 지보공 설치, 구배 기준 준수, 굴착 깊이 2m 이상 시 사다리 등 승강설비 설치 | 12 |\n"
+        "| 되메우기 | 장비 협착 | 신호수 배치, 출입 통제, 후진 경고음 확인 | 6 |\n"
+    ),
+}
 
 
 def run():
     print("=== export_pdf.py 스모크 테스트 ===\n")
 
-    record = get_record_by_id(TEST_USER_ID, TEST_PROJECT_NAME, TEST_RECORD_ID)
-    assert record is not None, "테스트 픽스처 기록을 찾지 못함 — data/projects 확인 필요"
+    record = SAMPLE_RECORD
 
     print("[1] PDF 바이트 생성...")
     pdf_bytes = record_to_pdf_bytes(record)
@@ -43,10 +51,24 @@ def run():
     reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
     full_text = "".join(page.extract_text() for page in reader.pages)
 
+    print("\n[4] 표가 페이지 폭 안에 들어가는지(clipping 없음) 확인...")
+    # export_pdf.py가 실제로 표를 만드는 함수(_build_table_element)를 그대로 호출해
+    # wrap() 결과 폭을 검사한다 — 이 테스트 안에서 colWidths 로직을 별도로
+    # 재구현하면 production 코드가 회귀해도(예: colWidths를 빼먹는 실수) 테스트가
+    # 이를 감지하지 못하는 tautology가 되므로, 반드시 실제 production 함수를 호출한다.
+    tables = parse_markdown_tables(SAMPLE_RECORD["draft"])
+    frame_width = landscape(A4)[0] - 2 * 72  # reportlab 기본 여백(~1인치) 기준, SimpleDocTemplate 기본값과 일치
+    fits = True
+    for table in tables:
+        w, h = _build_table_element(table, frame_width).wrap(frame_width, 10000)
+        if w > frame_width + 1:  # +1pt: 부동소수점 오차 허용
+            fits = False
+
     checks = []
     checks.append(("PDF 매직바이트", is_pdf))
     checks.append(("문서종류 제목 보존", record["document_type"] in full_text))
-    checks.append(("표 내용(현장명) 보존", "현장명" in full_text and "테스트현장" in full_text))
+    checks.append(("표 내용(작업단계/감소대책) 보존", "작업단계" in full_text and "매설물 관리기관" in full_text))
+    checks.append(("모든 표가 페이지 폭 안에 들어감(clipping 없음)", fits))
 
     print()
     all_ok = True

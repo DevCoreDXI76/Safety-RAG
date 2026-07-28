@@ -17,18 +17,24 @@ if hasattr(sys.stdout, "reconfigure"):
 from hwpx import HwpxDocument
 
 from export_hwpx import record_to_hwpx_bytes
-from generate_draft import get_record_by_id
 
-TEST_USER_ID = "xlsx_export_test_user"
-TEST_PROJECT_NAME = "xlsx_export_테스트현장"
-TEST_RECORD_ID = "20c1c6d12755"
+SAMPLE_RECORD = {
+    "document_type": "위험성평가표",
+    "draft": (
+        "| 작업단계 | 유해위험요인 | 감소대책 | 위험성 |\n"
+        "|------|------|------|------|\n"
+        "| 사전조사 | 매설물 손상(가스·전력·상수도) | 매설물 관리기관 확인 및 이설·보호대책 수립, "
+        "굴착 착수 전 관계 기관(한국가스공사, 한전, 상수도사업본부 등) 협의 후 착공계 제출 | 9 |\n"
+        "| 굴착 | 토사 붕괴 | 흙막이 지보공 설치, 구배 기준 준수, 굴착 깊이 2m 이상 시 사다리 등 승강설비 설치 | 12 |\n"
+        "| 되메우기 | 장비 협착 | 신호수 배치, 출입 통제, 후진 경고음 확인 | 6 |\n"
+    ),
+}
 
 
 def run():
     print("=== export_hwpx.py 스모크 테스트 ===\n")
 
-    record = get_record_by_id(TEST_USER_ID, TEST_PROJECT_NAME, TEST_RECORD_ID)
-    assert record is not None, "테스트 픽스처 기록을 찾지 못함 — data/projects 확인 필요"
+    record = SAMPLE_RECORD
 
     print("[1] HWPX 바이트 생성...")
     hwpx_bytes = record_to_hwpx_bytes(record)
@@ -47,7 +53,7 @@ def run():
     checks = []
     checks.append(("문서종류 제목 보존", record["document_type"] in full_text))
     checks.append(("표 1개 인식됨", len(table_map) == 1))
-    checks.append(("표 내용(현장명) 보존", "현장명" in full_text and "테스트현장" in full_text))
+    checks.append(("표 내용(작업단계/감소대책) 보존", "작업단계" in full_text and "매설물 관리기관" in full_text))
     checks.append(("손상 파일 없음", bad_file is None))
 
     print()
