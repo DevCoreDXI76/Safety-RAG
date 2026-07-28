@@ -27,6 +27,7 @@ from api.schemas import (
     GenerateRequest,
 )
 from api.telegram_auth import require_telegram_auth
+from api.error_alert import report_error
 from api.rate_limit import check_and_increment
 from api.cost_alert import check_and_alert_daily_cost
 
@@ -98,6 +99,7 @@ def generate(req: GenerateRequest, telegram_user: dict = Depends(require_telegra
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             check_and_alert_daily_cost()
         except Exception as e:
+            report_error("문서 생성 스트림", e)
             error_event = {"type": "error", "message": f"생성 중 오류 발생: {str(e)}"}
             yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
