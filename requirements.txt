@@ -8,3 +8,4 @@ uvicorn[standard]
 requests
 openpyxl
 python-hwpx
+reportlab
