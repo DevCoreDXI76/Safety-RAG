@@ -194,7 +194,7 @@
 - [x] 문서유형별 생성 시간 로깅 추가 — 위 커밋 `9fa48a4`에 포함 ([링크](https://app.notion.com/39d66ca42976807ba7f7ec78ef320f91))
 - [x] 🔄 스트리밍(SSE) 백엔드 구현 — **완료, 그것도 훨씬 이전(2026-07-11, 체크리스트 작성일보다 빠름)**. `api/routes.py`에서 `StreamingResponse` + `text/event-stream` 확인. 원래 "8주 로드맵 이후" 우선순위였는데 실제로는 가장 먼저 구현됨 — 계획과 실행 순서가 어긋난 사례, Notion에도 반영함 ([링크](https://app.notion.com/39d66ca4297680f4aa82ce06aa00819f))
 - [x] 🔄 완전 스트리밍 vs 부분 버퍼링 방식 결정 및 프론트엔드 반영 — **완료 (2026-07-11)**. git 커밋 메시지로 "완전 스트리밍"(스트림 종료 후 사후 인용 검증) 방식으로 결정됐음을 확인 ([링크](https://app.notion.com/39d66ca4297680febdd6fdbedaf5ad5b))
-- [ ] 문서유형별 실측 API 원가 데이터 기획자 역할에 전달 — Notion에 신규 카드 추가함 ([링크](https://app.notion.com/3ab66ca4297681c18be8e5a8d40342c8))
+- [x] 문서유형별 실측 API 원가 데이터 기획자 역할에 전달 — **완료 (2026-07-28)**: `data/token_usage_log.jsonl`(102건) 집계 결과 Sonnet 처리 문서(표준작업계획서·TBM일지·위험성평가표) 36~77원/건(인트로가), Haiku 처리 문서(안전보건교육일지) 약 20원/건 — "건당 10원" 가설은 둘 다에 낙관적이었음. 상세: [Safety-RAG_문서유형별_실측API원가_2026-07-28.md]. Notion 상태도 완료로 갱신 ([링크](https://app.notion.com/3ab66ca4297681c18be8e5a8d40342c8))
 
 ---
 

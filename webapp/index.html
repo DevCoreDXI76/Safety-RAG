@@ -429,8 +429,10 @@
 </div>
 
 <script>
-  // Railway 배포 완료(260707). Railway 등에 배포한 뒤에는 실제 API 도메인으로 교체할 것.
-  const API_BASE = "https://web-production-9d1bd.up.railway.app";
+  // 이 페이지는 api/main.py가 /app 경로에 정적 파일로 서빙한다(로컬 uvicorn이든
+  // Railway 배포든 항상 API와 같은 오리진). 그래서 API_BASE는 빈 문자열(상대경로)로
+  // 두면 dev/prod 모두 자동으로 맞는 도메인을 탄다 — 배포 시 수동 교체 불필요.
+  const API_BASE = "";
 
   const WORK_TYPES = [
     { label: "굴착작업" },
