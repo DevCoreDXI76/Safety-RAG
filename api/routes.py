@@ -18,6 +18,8 @@ from generate_draft import (
     generate_document_draft_stream,
 )
 from export_xlsx import record_to_xlsx_bytes
+from export_hwpx import record_to_hwpx_bytes
+from export_pdf import record_to_pdf_bytes
 from api.schemas import (
     DocumentTypesResponse,
     DocumentTypeItem,
@@ -121,5 +123,43 @@ def export_record_xlsx(project_name: str, record_id: str, telegram_user: dict = 
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f"attachment; filename=\"export.xlsx\"; filename*=UTF-8''{quote(filename)}",
+        },
+    )
+
+
+@router.get("/projects/{project_name}/records/{record_id}/export.hwpx")
+def export_record_hwpx(project_name: str, record_id: str, telegram_user: dict = Depends(require_telegram_auth)):
+    """저장된 기록 하나를 hwpx로 내보낸다. 스타일은 단순 테이블(제목+표+기본 테두리) 수준."""
+    user_id = telegram_user["user_id"]
+    record = get_record_by_id(user_id, project_name, record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="지정한 기록을 찾을 수 없습니다.")
+
+    hwpx_bytes = record_to_hwpx_bytes(record)
+    filename = f"{project_name}_{record['document_type']}.hwpx"
+    return Response(
+        content=hwpx_bytes,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"export.hwpx\"; filename*=UTF-8''{quote(filename)}",
+        },
+    )
+
+
+@router.get("/projects/{project_name}/records/{record_id}/export.pdf")
+def export_record_pdf(project_name: str, record_id: str, telegram_user: dict = Depends(require_telegram_auth)):
+    """저장된 기록 하나를 pdf로 내보낸다. 스타일은 단순 테이블(제목+표+기본 테두리) 수준."""
+    user_id = telegram_user["user_id"]
+    record = get_record_by_id(user_id, project_name, record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="지정한 기록을 찾을 수 없습니다.")
+
+    pdf_bytes = record_to_pdf_bytes(record)
+    filename = f"{project_name}_{record['document_type']}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"export.pdf\"; filename*=UTF-8''{quote(filename)}",
         },
     )
