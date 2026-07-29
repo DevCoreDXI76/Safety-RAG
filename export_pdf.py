@@ -50,7 +50,9 @@ def _build_table_element(table, frame_width):
         + [Paragraph("", _CELL_STYLE)] * (ncols - len(row))
         for row in table
     ]
-    return Table(data, colWidths=[col_width] * ncols, style=_TABLE_STYLE)
+    # repeatRows=1: 표가 페이지 경계를 넘어가면 0번째 행(헤더)을 다음
+    # 페이지에도 반복해서 그린다.
+    return Table(data, colWidths=[col_width] * ncols, style=_TABLE_STYLE, repeatRows=1)
 
 
 def record_to_pdf_bytes(record):
@@ -62,7 +64,12 @@ def record_to_pdf_bytes(record):
     tables = parse_markdown_tables(record["draft"])
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
+    # title/author: reportlab이 PDF 메타데이터(Author/Title)에 그대로 채워
+    # 넣는 표준 생성자 인자 — 이전 QA에서 지적된 "메타데이터 공란" 문제 해결.
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        title=record["document_type"], author="Safety-RAG",
+    )
     elements = [Paragraph(escape(record["document_type"]), _TITLE_STYLE), Spacer(1, 12)]
 
     if not tables:

@@ -33,6 +33,11 @@ def record_to_hwpx_bytes(record):
         rows = len(table)
         cols = max(len(row) for row in table)
         hwpx_table = doc.add_table(rows, cols)
+        # 표가 페이지 경계를 넘어갈 때 헤더 행(0번째 행)이 다음 페이지에도
+        # 반복되도록 한다. python-hwpx 고수준 API엔 없지만, HWPX 표 XML이
+        # 이미 이 속성을 지원한다(기본값 "0" 확인, "1"로 저장 후 재오픈해도
+        # 유지되는 것 검증 완료).
+        hwpx_table.element.set("repeatHeader", "1")
         for row_index, row_cells in enumerate(table):
             for col_index, value in enumerate(row_cells):
                 hwpx_table.set_cell_text(row_index, col_index, value)
