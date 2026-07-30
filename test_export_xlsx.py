@@ -39,9 +39,10 @@ SAMPLE_RECORD_WITH_SCORE = {
     "document_type": "위험성평가표",
     "project_info": "테스트용 점수 셀",
     "draft": (
-        "| 위험요인 | 가능성 | 중대성 | 위험성 |\n"
-        "|----------|--------|--------|--------|\n"
-        "| 지게차 충돌 | 3(AI 제안값, 현장 확인 필수) | 5(AI 제안값, 현장 확인 필수) | 15(AI 제안값, 현장 확인 필수) |\n"
+        "| 위험요인 | 빈도 | 강도 | 위험등급 | 개선후 위험등급 |\n"
+        "|----------|------|------|----------|------------------|\n"
+        "| 지게차 충돌 | 3(AI 제안값, 현장 확인 필수) | 2(AI 제안값, 현장 확인 필수) | "
+        "A(AI 제안값, 현장 확인 필수) | B(AI 제안값, 현장 확인 필수) |\n"
     ),
     "created_at": "2026-07-22 10:00:00",
 }
@@ -79,16 +80,28 @@ def run():
     ws3 = wb3.active
 
     results.append((
-        "AI 제안값 점수 셀이 순수 숫자로 저장됨",
+        "빈도·강도 AI 제안값이 순수 숫자로 저장됨",
         ws3.cell(row=2, column=2).value == 3
-        and ws3.cell(row=2, column=3).value == 5
-        and ws3.cell(row=2, column=4).value == 15
-        and isinstance(ws3.cell(row=2, column=4).value, int),
+        and ws3.cell(row=2, column=3).value == 2
+        and isinstance(ws3.cell(row=2, column=2).value, int),
+    ))
+    results.append((
+        "위험등급·개선후 위험등급 AI 제안값이 순수 등급 문자로 저장됨",
+        ws3.cell(row=2, column=4).value == "A"
+        and ws3.cell(row=2, column=5).value == "B",
     ))
     results.append((
         "AI 제안값 안내 문구는 셀 메모(comment)로 보존됨",
         ws3.cell(row=2, column=4).comment is not None
         and "AI 제안값" in ws3.cell(row=2, column=4).comment.text,
+    ))
+    results.append((
+        "위험등급 열에 A/B/C 등급 조건부서식이 걸림",
+        any(
+            rule.formula == ['"A"']
+            for rules in ws3.conditional_formatting._cf_rules.values()
+            for rule in rules
+        ),
     ))
     results.append((
         "점수가 아닌 일반 텍스트 셀은 그대로 문자열 유지",

@@ -13,10 +13,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from generate_draft import _finalize_draft
 
-# 참고자료(컨텍스트)에는 존재하지 않는 조문 번호, 물결표 빠진 구간표,
-# 근거 없는 이격거리 수치를 모두 담은 합성 초안.
+# 참고자료(컨텍스트)에는 존재하지 않는 조문 번호, 구식 곱셈법 구간표(행렬법
+# 전환 후에는 나오면 안 되는 잔존 표기), 근거 없는 이격거리 수치를 모두 담은
+# 합성 초안.
 FAKE_DRAFT = (
-    "위험성 점수 구간: 14 낮음 / 59 중간 / 10~25 높음\n"
+    "위험성 점수 구간: 1~4 낮음 / 5~9 중간 / 10~25 높음\n"
     "위험요인: 국사 내 지게차 운행 <br>"
     "안전대책: 제999조에 따라 통로 폭과의 여유 공간(좌우 각 최소 30cm 이상)을 확보한다."
 )
@@ -33,7 +34,7 @@ def run():
     checks = [
         ("saved_record는 project_name이 없으면 None", saved_record is None),
         ("조문 인용 경고 포함", "제999조" in (warning or "")),
-        ("구간표 경고 포함", "1~4" in (warning or "") and "5~9" in (warning or "")),
+        ("구식 구간표 잔존 경고 포함", "1~4" in (warning or "") and "5~9" in (warning or "")),
         ("이격거리 경고 포함", "30cm" in (warning or "")),
         ("draft 끝에 경고 3종이 순서대로 append됨", warning is not None and draft.endswith(warning)),
     ]
