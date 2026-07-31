@@ -55,9 +55,13 @@ def record_to_hwpx_bytes(record):
         doc.add_paragraph(record["draft"])
         return doc.to_bytes()
 
-    # 문서 전체에서 재사용할 가운데정렬 문단속성 id. ensure_paragraph_alignment는
-    # 같은 정렬이면 기존 id를 재사용하므로 문서당 한 번만 만들면 된다.
+    # 문서 전체에서 재사용할 정렬 문단속성 id. ensure_paragraph_alignment는
+    # 같은 정렬이면 기존 id를 재사용하므로 문서당 한 번씩만 만들면 된다.
+    # left_para_id를 명시적으로 지정하지 않으면 왼쪽정렬 셀이 문서 기본
+    # 문단속성(JUSTIFY)을 그대로 물려받아 XLSX(horizontal="left")·
+    # PDF(TA_LEFT)와 어긋난다.
     center_para_id = doc.headers[0].ensure_paragraph_alignment("CENTER")
+    left_para_id = doc.headers[0].ensure_paragraph_alignment("LEFT")
 
     for table in tables:
         rows = len(table)
@@ -90,12 +94,13 @@ def record_to_hwpx_bytes(record):
 
                 cell = hwpx_table.cell(row_index, col_index)
                 cell.set_text(text)
-                if center:
-                    # set_text 직후에도 셀의 첫 문단은 그대로 유지된다(비어 있어도
-                    # 항상 1개 존재) — add_paragraph로 새로 추가하면 빈 문단이
-                    # 하나 더 생겨 텍스트 앞에 빈 줄이 생기므로, 기존 첫 문단의
-                    # 정렬 속성만 바꿔치기한다.
-                    cell.paragraphs[0].para_pr_id_ref = center_para_id
+                # set_text 직후에도 셀의 첫 문단은 그대로 유지된다(비어 있어도
+                # 항상 1개 존재) — add_paragraph로 새로 추가하면 빈 문단이
+                # 하나 더 생겨 텍스트 앞에 빈 줄이 생기므로, 기존 첫 문단의
+                # 정렬 속성만 바꿔치기한다. center든 아니든 항상 명시적으로
+                # 지정해야 한다 — 그렇지 않으면 문서 기본 문단속성(JUSTIFY)을
+                # 물려받아 XLSX/PDF의 왼쪽정렬과 어긋난다.
+                cell.paragraphs[0].para_pr_id_ref = center_para_id if center else left_para_id
                 if fill_hex:
                     hwpx_table.set_cell_shading(row_index, col_index, fill_hex)
 

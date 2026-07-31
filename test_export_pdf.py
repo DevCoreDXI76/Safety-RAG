@@ -18,7 +18,6 @@ if hasattr(sys.stdout, "reconfigure"):
 import pypdf
 from reportlab.lib.pagesizes import A4, landscape
 
-from document_styles import STYLE_SPECS
 from export_pdf import _build_table_element, record_to_pdf_bytes
 from markdown_tables import parse_markdown_tables
 
@@ -70,7 +69,6 @@ def run():
     checks.append(("모든 표가 페이지 폭 안에 들어감(clipping 없음)", fits))
 
     # --- 스타일(열비율/배경색/AI 제안값 각주) 검증 ---
-    risk_style = STYLE_SPECS["위험성평가표"]
     score_tables = parse_markdown_tables(SAMPLE_RECORD_WITH_SCORE["draft"])
     score_table = score_tables[0]
     score_flowable, ai_present = _build_table_element(

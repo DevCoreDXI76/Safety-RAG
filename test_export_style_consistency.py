@@ -11,6 +11,7 @@ export_xlsx.py/export_pdf.py/export_hwpx.py 3포맷 스타일 일관성 검증 �
 """
 import io
 import sys
+import xml.etree.ElementTree as ET
 import zipfile
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -24,6 +25,26 @@ from export_pdf import _build_table_element, _hex_color
 from export_xlsx import record_to_xlsx_bytes
 from markdown_tables import parse_markdown_tables
 from reportlab.lib.pagesizes import A4, landscape
+
+_HP_NS = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+
+
+def _hwpx_row0_cell_widths(section_xml_bytes):
+    """section0.xml의 첫 번째 표(hp:tbl)에서 0번째 행(rowAddr=0) 셀들의
+    hp:cellSz width를 colAddr 순서대로 반환한다. HWPX 셀 폭은 hp:tc 안의
+    hp:cellSz width 속성에 들어있다 — 실제 생성된 XML을 직접 열어 확인한
+    태그/속성명이며 문서 스펙만 보고 추측한 것이 아니다.
+    """
+    root = ET.fromstring(section_xml_bytes)
+    first_table = root.find(f".//{_HP_NS}tbl")
+    widths = []
+    for tc in first_table.findall(f"{_HP_NS}tr/{_HP_NS}tc"):
+        addr = tc.find(f"{_HP_NS}cellAddr")
+        sz = tc.find(f"{_HP_NS}cellSz")
+        if addr is not None and sz is not None and addr.get("rowAddr") == "0":
+            widths.append((int(addr.get("colAddr")), int(sz.get("width"))))
+    widths.sort(key=lambda pair: pair[0])
+    return [w for _, w in widths]
 
 RECORD = {
     "id": "consistency1",
@@ -80,6 +101,22 @@ def run():
         pdf_a_color_ok,
     ))
 
+    # PDF: 열너비 "비율"이 스펙과 일치하는지(색상만 맞고 폭이 어긋나는 회귀를 잡기 위함).
+    # reportlab Table은 생성자에 넘긴 colWidths를 _colWidths에 그대로 보관한다
+    # (test_export_style_consistency.py 작성 전 아래 명령으로 속성명을 직접 확인함:
+    #   python -c "from reportlab.platypus import Table; t = Table([['a','b']], colWidths=[10,20]); print(t._colWidths)"
+    #  -> [10, 20]).
+    pdf_ncols = max(len(row) for row in tables[0])
+    pdf_col_widths = table_flowable._colWidths
+    pdf_total = sum(pdf_col_widths)
+    pdf_spec_widths = style.column_widths[:pdf_ncols]
+    pdf_spec_total = sum(pdf_spec_widths)
+    pdf_ratios_ok = len(pdf_col_widths) == pdf_ncols and all(
+        abs(w / pdf_total - spec_w / pdf_spec_total) < 0.01
+        for w, spec_w in zip(pdf_col_widths, pdf_spec_widths)
+    )
+    checks.append(("PDF: 열너비 비율이 스펙(column_widths)과 일치", pdf_ratios_ok))
+
     # HWPX: 같은 hex 색상이 XML에 기록되는지
     hwpx_bytes = record_to_hwpx_bytes(RECORD)
     with zipfile.ZipFile(io.BytesIO(hwpx_bytes)) as zf:
@@ -92,6 +129,20 @@ def run():
         "HWPX: 위험등급 B 배경색이 XLSX/PDF와 같은 hex로 기록됨",
         style.risk_grade_colors["B"] in header_xml.upper(),
     ))
+
+    # HWPX: 열너비 "비율"이 스펙과 일치하는지(PDF와 동일한 회귀 방지 목적).
+    with zipfile.ZipFile(io.BytesIO(hwpx_bytes)) as zf:
+        section_xml = zf.read("Contents/section0.xml")
+    hwpx_ncols = max(len(row) for row in tables[0])
+    hwpx_col_widths = _hwpx_row0_cell_widths(section_xml)
+    hwpx_total = sum(hwpx_col_widths)
+    hwpx_spec_widths = style.column_widths[:hwpx_ncols]
+    hwpx_spec_total = sum(hwpx_spec_widths)
+    hwpx_ratios_ok = len(hwpx_col_widths) == hwpx_ncols and all(
+        abs(w / hwpx_total - spec_w / hwpx_spec_total) < 0.01
+        for w, spec_w in zip(hwpx_col_widths, hwpx_spec_widths)
+    )
+    checks.append(("HWPX: 열너비 비율이 스펙(column_widths)과 일치", hwpx_ratios_ok))
 
     print()
     all_ok = True

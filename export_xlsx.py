@@ -17,7 +17,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from document_styles import (
-    DEFAULT_COLUMN_WIDTH, AI_SCORE_NOTE, base_header, get_style, parse_ai_score_cell,
+    DEFAULT_COLUMN_WIDTH, base_header, get_style, parse_ai_score_cell,
     CENTER_ALIGN_HEADERS,
 )
 from markdown_tables import parse_markdown_tables
