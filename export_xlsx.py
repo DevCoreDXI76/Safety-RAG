@@ -16,12 +16,13 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from document_styles import (
+    DEFAULT_COLUMN_WIDTH, AI_SCORE_NOTE, base_header, get_style, parse_ai_score_cell,
+    CENTER_ALIGN_HEADERS,
+)
 from markdown_tables import parse_markdown_tables
 
-_HEADER_FILL = PatternFill(start_color="E3ECEF", end_color="E3ECEF", fill_type="solid")
 _HEADER_FONT = Font(bold=True)
-_DATA_HEADER_FILL = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
-_DATA_HEADER_FONT = Font(bold=True, color="FFFFFF")
 
 _THIN_SIDE = Side(style="thin")
 _THIN_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_THIN_SIDE)
@@ -32,75 +33,16 @@ _ALIGN_LEFT_TOP = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
 _INVALID_SHEET_CHARS_RE = re.compile(r"[:\\/?*\[\]]")
 _COMMENT_AUTHOR = "safety-rag"
-# 빈도·강도는 숫자(1~3), 위험등급·개선후 위험등급은 문자(A/B/C) — 행렬법
-# 전환(2026-07) 이후 둘 다 "N(AI 제안값, 현장 확인 필수)" 형식으로 온다.
-_AI_SCORE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?|[A-Ca-c])\s*\(AI\s*제안값,\s*현장\s*확인\s*필수\)\s*$")
-_AI_SCORE_NOTE = "AI 제안값, 현장 확인 필수"
-
-_DEFAULT_COLUMN_WIDTH = 22
-
-# 문서종류별 열 너비(왼쪽부터). docs/샘플문서/*.xlsx 서식목업 실측값.
-# 위험성평가표는 2026-07 KRAS 표준 컬럼 보강(관련근거·현재 안전조치·개선후
-# 위험등급·개선예정일 추가)으로 9열 → 13열이 됐다(공종/단위작업/유해위험요인/
-# 관련근거/현재 안전조치/빈도/강도/위험등급/위험성 감소대책/개선후 위험등급/
-# 개선예정일/이행여부·확인일/재평가필요).
-_COLUMN_WIDTHS_BY_DOCUMENT_TYPE = {
-    "위험성평가표": [6, 20, 32, 18, 22, 6, 6, 10, 38, 12, 12, 14, 10],
-    "표준 작업계획서": [16, 26, 30, 34],
-    "TBM 일지": [10, 22, 34, 16],
-    "안전보건교육일지": [10, 22, 34, 16],
-    "산업안전보건관리비 사용명세서": [16, 16, 22, 26, 16, 18, 16],
-    "협의체 회의록": [20, 16, 16],
-}
-
-# 표 헤더가(괄호 부연설명 제외) 이 목록에 속하면 가운데 정렬(짧은 값용),
-# 아니면 서술형 텍스트로 보고 왼쪽·위 정렬을 쓴다. 5개 서식목업의 데이터 표
-# 헤더 전수 실측 기준("단계"·"항목"은 서술형으로 쓰여 왼쪽 정렬이 맞다).
-_CENTER_ALIGN_HEADERS = {
-    "번호", "순번", "no", "순서", "구분",
-    "담당", "서명", "소속/직책", "성명",
-    "빈도", "강도", "위험등급", "개선후 위험등급", "개선예정일",
-    "이행확인", "재평가 필요여부", "재평가필요",
-    "규격", "수량", "금액", "증빙유형", "사용일자", "소요시간",
-    "계상금액", "사용금액", "집행률",
-    "작성자", "검토자", "승인자",
-    "일자", "날짜", "시간", "인원", "등급",
-}
-
-# 위험등급/개선후 위험등급 열은 행렬법(A/B/C) 기준 — 곱셈법(1~25 숫자) 시절의
-# 임계값(>=10/5~9/<=4) 조건부서식을 등급 문자열 일치 조건으로 대체했다.
-_RISK_GRADE_HEADERS = {"위험등급", "개선후 위험등급"}
-_RISK_HIGH_FILL = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")  # A(매우위험)
-_RISK_MID_FILL = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")   # B(위험)
-_RISK_LOW_FILL = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")   # C(주의관리요)
 
 
-def _parse_ai_score_cell(text):
-    """
-    system_prompt가 빈도·강도·위험등급·개선후 위험등급마다 강제로 붙이는
-    '3(AI 제안값, 현장 확인 필수)' / 'A(AI 제안값, 현장 확인 필수)' 표기를
-    감지해, 순수 값(숫자 또는 등급 문자)과 안내 문구로 분리한다. 매치되지
-    않는 일반 텍스트 셀은 (None, None)을 반환한다.
-    """
-    match = _AI_SCORE_RE.match(text)
-    if not match:
-        return None, None
-    raw = match.group(1)
-    if raw.isalpha():
-        return raw.upper(), _AI_SCORE_NOTE
-    number = float(raw) if "." in raw else int(raw)
-    return number, _AI_SCORE_NOTE
+def _fill(hex_color):
+    return PatternFill(start_color=hex_color, end_color=hex_color, fill_type="solid")
 
 
 def _sheet_title(document_type):
     """엑셀 시트명 제약(31자 이내, : \\ / ? * [ ] 금지)을 만족하도록 정리한다."""
     cleaned = _INVALID_SHEET_CHARS_RE.sub("", document_type)
     return cleaned[:31] or "문서"
-
-
-def _base_header(text):
-    """헤더 텍스트에서 '위험성(AI 제안값, 현장 확인 필수)' 같은 괄호 부연설명을 제거한다."""
-    return re.sub(r"\([^)]*\)", "", text).strip()
 
 
 def _apply_print_settings(ws, title_row=None):
@@ -125,6 +67,12 @@ def record_to_xlsx_bytes(record):
     표가 여러 개면 표 사이에 빈 행 하나를 둔다. 표가 없으면 draft 원문을 A1에 넣는다.
     """
     tables = parse_markdown_tables(record["draft"])
+    style = get_style(record["document_type"])
+
+    header_fill = _fill(style.header_fill)
+    data_header_font = Font(bold=True, color=style.header_font_color)
+    kv_header_fill = _fill(style.kv_header_fill)
+    risk_fills = {grade: _fill(hex_color) for grade, hex_color in style.risk_grade_colors.items()}
 
     wb = Workbook()
     ws = wb.active
@@ -137,7 +85,7 @@ def record_to_xlsx_bytes(record):
         wb.save(buffer)
         return buffer.getvalue()
 
-    column_widths = list(_COLUMN_WIDTHS_BY_DOCUMENT_TYPE.get(record["document_type"], []))
+    column_widths = list(style.column_widths)
     current_row = 1
     max_col_count = 1
     freeze_row = None
@@ -145,18 +93,18 @@ def record_to_xlsx_bytes(record):
 
     for table_index, table in enumerate(tables):
         header_row = current_row
-        headers_base = [_base_header(h) for h in table[0]]
+        headers_base = [base_header(h) for h in table[0]]
         is_kv_table = len(table[0]) == 2
         risk_grade_col_idxs = []
         if not is_kv_table:
             for idx, header_text in enumerate(headers_base, start=1):
-                if header_text in _RISK_GRADE_HEADERS:
+                if header_text in style.risk_grade_headers:
                     risk_grade_col_idxs.append(idx)
 
         for row_offset, row_cells in enumerate(table):
             is_header = row_offset == 0
             for col_idx, value in enumerate(row_cells, start=1):
-                number, note = _parse_ai_score_cell(value)
+                number, note = parse_ai_score_cell(value)
                 cell = ws.cell(
                     row=current_row, column=col_idx,
                     value=number if number is not None else value,
@@ -168,29 +116,27 @@ def record_to_xlsx_bytes(record):
                 if is_kv_table:
                     if col_idx == 1:
                         cell.font = _HEADER_FONT
-                        cell.fill = _HEADER_FILL
+                        cell.fill = kv_header_fill
                         cell.alignment = _ALIGN_CENTER
                     else:
                         if is_header:
                             cell.font = _HEADER_FONT
-                            cell.fill = _HEADER_FILL
+                            cell.fill = kv_header_fill
                         cell.alignment = _ALIGN_LEFT_CENTER
                 elif is_header:
-                    cell.font = _DATA_HEADER_FONT
-                    cell.fill = _DATA_HEADER_FILL
+                    cell.font = data_header_font
+                    cell.fill = header_fill
                     cell.alignment = _ALIGN_CENTER
                 else:
                     header_text = headers_base[col_idx - 1] if col_idx - 1 < len(headers_base) else ""
                     cell.alignment = (
-                        _ALIGN_CENTER if header_text.lower() in _CENTER_ALIGN_HEADERS else _ALIGN_LEFT_TOP
+                        _ALIGN_CENTER if header_text.lower() in CENTER_ALIGN_HEADERS else _ALIGN_LEFT_TOP
                     )
 
             max_col_count = max(max_col_count, len(row_cells))
             current_row += 1
 
             if table_index == 1 and is_header:
-                # 5개 서식목업 공통 규칙: 두 번째 표 헤더 바로 아래에서 틀 고정.
-                # (표 전체가 아니라 헤더 행 바로 다음에서 고정해야 함)
                 freeze_row = current_row
 
         if risk_grade_col_idxs and len(table) > 1:
@@ -200,10 +146,10 @@ def record_to_xlsx_bytes(record):
         current_row += 1  # 표 사이 빈 행
 
     if freeze_row is None:
-        freeze_row = 2  # 표가 1개뿐이면 그 표 헤더 바로 아래에서 고정
+        freeze_row = 2
 
     while len(column_widths) < max_col_count:
-        column_widths.append(_DEFAULT_COLUMN_WIDTH)
+        column_widths.append(DEFAULT_COLUMN_WIDTH)
     for col_idx in range(1, max_col_count + 1):
         ws.column_dimensions[get_column_letter(col_idx)].width = column_widths[col_idx - 1]
 
@@ -211,15 +157,10 @@ def record_to_xlsx_bytes(record):
 
     for col_letter, first_row, last_row in risk_score_ranges:
         cell_range = f"{col_letter}{first_row}:{col_letter}{last_row}"
-        ws.conditional_formatting.add(
-            cell_range, CellIsRule(operator="equal", formula=['"A"'], fill=_RISK_HIGH_FILL)
-        )
-        ws.conditional_formatting.add(
-            cell_range, CellIsRule(operator="equal", formula=['"B"'], fill=_RISK_MID_FILL)
-        )
-        ws.conditional_formatting.add(
-            cell_range, CellIsRule(operator="equal", formula=['"C"'], fill=_RISK_LOW_FILL)
-        )
+        for grade, fill in risk_fills.items():
+            ws.conditional_formatting.add(
+                cell_range, CellIsRule(operator="equal", formula=[f'"{grade}"'], fill=fill)
+            )
 
     _apply_print_settings(ws, title_row=freeze_row - 1)
 
