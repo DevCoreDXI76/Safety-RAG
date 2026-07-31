@@ -20,7 +20,7 @@ from openpyxl import load_workbook
 
 from document_styles import STYLE_SPECS
 from export_hwpx import record_to_hwpx_bytes
-from export_pdf import _build_table_element, record_to_pdf_bytes
+from export_pdf import _build_table_element, _hex_color
 from export_xlsx import record_to_xlsx_bytes
 from markdown_tables import parse_markdown_tables
 from reportlab.lib.pagesizes import A4, landscape
@@ -44,29 +44,40 @@ def run():
     checks = []
     style = STYLE_SPECS["위험성평가표"]
 
-    # XLSX: 위험등급 열(D, 1-indexed 4번째)에 A등급 조건부서식이 걸려있는지
+    # XLSX: 위험등급 열(D, 1-indexed 4번째)에 A등급 조건부서식이 걸려있고, 색상이 스펙과 일치하는지
     xlsx_bytes = record_to_xlsx_bytes(RECORD)
     ws = load_workbook(io.BytesIO(xlsx_bytes)).active
-    xlsx_has_a_rule = any(
-        rule.formula == ['"A"']
-        for rules in ws.conditional_formatting._cf_rules.values()
-        for rule in rules
-    )
-    checks.append(("XLSX: 위험등급 A 조건부서식 존재", xlsx_has_a_rule))
+    xlsx_a_rule_ok = False
+    for rules in ws.conditional_formatting._cf_rules.values():
+        for rule in rules:
+            if rule.formula == ['"A"'] and hasattr(rule, 'dxf') and rule.dxf and hasattr(rule.dxf, 'fill') and rule.dxf.fill:
+                # XLSX에서 fill color는 ARGB 형식 (e.g., '00F8CBAD' — leading '00'은 alpha)
+                # 뒤의 6자리 hex가 style spec과 일치하는지 확인
+                rgb = rule.dxf.fill.fgColor.rgb
+                if rgb.upper().endswith(style.risk_grade_colors["A"]):
+                    xlsx_a_rule_ok = True
+                    break
+    checks.append(("XLSX: 위험등급 A 조건부서식 존재하고 색상이 스펙과 일치", xlsx_a_rule_ok))
     checks.append((
         "XLSX: 열너비가 스펙과 일치(1열=빈도폭이 아니라 위험요인 열 폭)",
         ws.column_dimensions["A"].width == style.column_widths[0],
     ))
 
-    # PDF: 같은 표를 만들 때 위험등급 A/B 배경색 명령이 들어가는지
+    # PDF: 같은 표를 만들 때 위험등급 A 배경색 명령이 들어가고, 색상이 스펙과 일치하는지
     tables = parse_markdown_tables(RECORD["draft"])
     frame_width = landscape(A4)[0] - 2 * 72
     table_flowable, ai_present = _build_table_element(tables[0], frame_width, RECORD["document_type"])
     bg_commands = table_flowable._bkgrndcmds
     checks.append(("PDF: AI 제안값 감지됨", ai_present is True))
+    # cmd 구조: ('BACKGROUND', (col, row), (col, row), Color(...))
+    # cmd[1] == (3, 1)인 명령을 찾고, cmd[-1] (Color 객체)가 스펙 색상과 일치하는지 확인
+    pdf_a_color_ok = any(
+        cmd[1] == (3, 1) and cmd[-1] == _hex_color(style.risk_grade_colors["A"])
+        for cmd in bg_commands
+    )
     checks.append((
-        "PDF: 위험등급 A 셀(열3,행1)에 배경색 명령 존재",
-        any(cmd[1] == (3, 1) for cmd in bg_commands),
+        "PDF: 위험등급 A 셀(열3,행1)에 배경색이 스펙과 일치하는 명령 존재",
+        pdf_a_color_ok,
     ))
 
     # HWPX: 같은 hex 색상이 XML에 기록되는지
