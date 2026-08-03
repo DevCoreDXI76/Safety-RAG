@@ -68,6 +68,13 @@ def _handle_message(message):
         _handle_revoke_command(chat_id, text)
         return
 
+    if text == "/broadcast_feedback":
+        if user_id != ADMIN_TELEGRAM_USER_ID:
+            return
+        feedback_survey.broadcast_pending_reminders()
+        send_message(chat_id, "미응답 테스터에게 피드백 질문을 재발송했습니다.")
+        return
+
     if text != "/start":
         if text and feedback_survey.handle_free_text(user_id, chat_id, text):
             return

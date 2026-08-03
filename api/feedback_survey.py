@@ -254,3 +254,38 @@ def handle_free_text(user_id, chat_id, text):
         logger.exception("피드백 자유의견 처리 실패: user_id=%s", user_id)
         return True
     return False
+
+
+def _resend_pending_question(user_id, document_type, checkpoint_state):
+    if checkpoint_state.get("awaiting_free_text"):
+        send_message(
+            int(user_id), CHECKPOINTS[document_type]["free_text_prompt"],
+            reply_markup=_skip_keyboard(document_type),
+        )
+        return
+    answered_count = len(checkpoint_state.get("answers", {}))
+    questions = CHECKPOINTS[document_type]["questions"]
+    if answered_count >= len(questions):
+        return  # 이미 다 답했는데 completed만 안 된 극히 드문 상태 — 안전하게 건너뜀
+    question = questions[answered_count]
+    send_message(
+        int(user_id), question["text"],
+        reply_markup=_build_keyboard(document_type, answered_count, question),
+    )
+
+
+def broadcast_pending_reminders():
+    """트리거는 됐지만 completed가 아닌 모든 (user_id, document_type)에
+    현재 대기 중인 질문(또는 자유의견 프롬프트)을 재발송한다. 관리자 전용
+    명령(/broadcast_feedback)에서만 호출된다."""
+    state = _load_state()
+    for user_id_str, user_state in state.items():
+        for document_type, checkpoint_state in user_state.items():
+            if checkpoint_state.get("completed"):
+                continue
+            try:
+                _resend_pending_question(user_id_str, document_type, checkpoint_state)
+            except Exception:
+                logger.exception(
+                    "피드백 재발송 실패: user_id=%s document_type=%s", user_id_str, document_type
+                )
