@@ -19,6 +19,7 @@ from api.telegram_bot import (
     answer_callback_query,
 )
 from api.admin_stats import build_stats_message, build_authlog_message
+from api import feedback_survey
 
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 
@@ -68,6 +69,8 @@ def _handle_message(message):
         return
 
     if text != "/start":
+        if text and feedback_survey.handle_free_text(user_id, chat_id, text):
+            return
         return
 
     if is_allowed(user_id):
@@ -99,14 +102,25 @@ def _handle_revoke_command(chat_id, text):
 def _handle_callback_query(callback_query):
     clicker_id = callback_query["from"]["id"]
     callback_id = callback_query["id"]
+    data = callback_query["data"]
+    message = callback_query["message"]
+
+    if data.startswith("fb:"):
+        feedback_survey.handle_callback_answer(clicker_id, message["chat"]["id"], message["message_id"], data)
+        answer_callback_query(callback_id)
+        return
+
+    if data.startswith("fbskip:"):
+        feedback_survey.handle_skip_callback(clicker_id, message["chat"]["id"], message["message_id"], data)
+        answer_callback_query(callback_id)
+        return
 
     if clicker_id != ADMIN_TELEGRAM_USER_ID:
         answer_callback_query(callback_id, "관리자만 사용할 수 있습니다.")
         return
 
-    action, _, user_id_str = callback_query["data"].partition(":")
+    action, _, user_id_str = data.partition(":")
     user_id = int(user_id_str)
-    message = callback_query["message"]
 
     if action == "approve":
         pending = get_pending_request(user_id)
