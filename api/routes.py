@@ -10,6 +10,7 @@ from urllib.parse import quote
 # 프로젝트 루트의 generate_draft.py, common.py를 import하기 위한 경로 추가
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from api import feedback_survey
 from generate_draft import (
     DOCUMENT_TYPES,
     list_project_records,
@@ -98,6 +99,8 @@ def generate(req: GenerateRequest, telegram_user: dict = Depends(require_telegra
                 user_id=user_id,
                 work_type=req.work_type,
             ):
+                if event.get("type") == "done" and event.get("saved_record_id"):
+                    feedback_survey.maybe_trigger_checkpoint(user_id, req.document_type)
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             check_and_alert_daily_cost()
         except Exception as e:
