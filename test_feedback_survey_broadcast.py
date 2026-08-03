@@ -19,10 +19,18 @@ import api.feedback_survey as feedback_survey
 def run():
     checks = []
     original_state_file = feedback_survey.FEEDBACK_STATE_FILE
+    original_log_file = feedback_survey.FEEDBACK_LOG_FILE
     original_send_message = feedback_survey.send_message
+    original_edit_message_text = feedback_survey.edit_message_text
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         feedback_survey.FEEDBACK_STATE_FILE = os.path.join(tmp_dir, "feedback_state.json")
+        feedback_survey.FEEDBACK_LOG_FILE = os.path.join(tmp_dir, "beta1_feedback.jsonl")
+
+        sent = []
+        feedback_survey.send_message = lambda chat_id, text, reply_markup=None: sent.append((chat_id, text))
+        feedback_survey.edit_message_text = lambda chat_id, message_id, text, reply_markup=None: None
+
         try:
             # 완료됨 — 재발송 대상 아님
             feedback_survey.maybe_trigger_checkpoint(111, "위험성평가표")
@@ -40,8 +48,8 @@ def run():
             feedback_survey.handle_callback_answer(444, 444, 1, "fb:T:0:0")
             feedback_survey.handle_callback_answer(444, 444, 2, "fb:T:1:0")
 
-            sent = []
-            feedback_survey.send_message = lambda chat_id, text, reply_markup=None: sent.append((chat_id, text))
+            # 위 setup 단계에서 발송된 것은 재발송 검증 대상이 아니므로 비운다
+            sent.clear()
 
             feedback_survey.broadcast_pending_reminders()
 
@@ -62,7 +70,9 @@ def run():
             checks.append(("재발송 대상은 정확히 3명", len(sent_chat_ids) == 3))
         finally:
             feedback_survey.FEEDBACK_STATE_FILE = original_state_file
+            feedback_survey.FEEDBACK_LOG_FILE = original_log_file
             feedback_survey.send_message = original_send_message
+            feedback_survey.edit_message_text = original_edit_message_text
 
     print()
     for name, ok in checks:

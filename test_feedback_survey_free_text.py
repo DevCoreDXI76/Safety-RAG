@@ -21,6 +21,7 @@ def run():
     original_state_file = feedback_survey.FEEDBACK_STATE_FILE
     original_log_file = feedback_survey.FEEDBACK_LOG_FILE
     original_send_message = feedback_survey.send_message
+    original_edit_message_text = feedback_survey.edit_message_text
     original_admin_id = feedback_survey.ADMIN_TELEGRAM_USER_ID
 
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -30,6 +31,7 @@ def run():
 
         sent = []
         feedback_survey.send_message = lambda chat_id, text, reply_markup=None: sent.append((chat_id, text))
+        feedback_survey.edit_message_text = lambda chat_id, message_id, text, reply_markup=None: None
 
         try:
             # TBM 두 질문을 모두 답해 자유의견 대기 상태로 만든다
@@ -83,6 +85,7 @@ def run():
             feedback_survey.FEEDBACK_STATE_FILE = original_state_file
             feedback_survey.FEEDBACK_LOG_FILE = original_log_file
             feedback_survey.send_message = original_send_message
+            feedback_survey.edit_message_text = original_edit_message_text
             feedback_survey.ADMIN_TELEGRAM_USER_ID = original_admin_id
 
     print()
