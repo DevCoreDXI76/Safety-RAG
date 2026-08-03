@@ -190,6 +190,10 @@ def handle_callback_answer(user_id, chat_id, message_id, callback_data):
         checkpoint_state = state.setdefault(str(user_id), {}).setdefault(
             document_type, {"triggered_at": _now_iso(), "answers": {}, "completed": False}
         )
+        if checkpoint_state.get("completed"):
+            # 이미 완료된 체크포인트에 대한 중복 콜백(웹훅 재전송, 더블탭 등).
+            # 재처리하면 로그·관리자 알림이 중복되므로 조용히 무시한다.
+            return True
         checkpoint_state["answers"][question["key"]] = answer_text
 
         questions = checkpoint["questions"]

@@ -60,6 +60,19 @@ def run():
             checks.append(("로그 파일에 1줄 기록됨", len(log_lines) == 1))
             checks.append(("로그에 document_type 기록됨", log_lines[0]["document_type"] == "위험성평가표"))
 
+            # 1b) 중복 콜백(웹훅 재전송, 더블탭 등) — 이미 완료된 체크포인트는 재처리하지 않음
+            edits.clear()
+            handled_dup = feedback_survey.handle_callback_answer(111, 111, 1, "fb:R:0:1")
+            checks.append(("중복 fb: 콜백도 True 반환", handled_dup is True))
+            state = feedback_survey._load_state()
+            cp = state["111"]["위험성평가표"]
+            checks.append(("중복 콜백 후 answers 변화 없음", cp["answers"] == {"q1_quality": "조금만 수정하면 됨"}))
+            with open(feedback_survey.FEEDBACK_LOG_FILE, "r", encoding="utf-8") as f:
+                log_lines_after_dup = [json.loads(line) for line in f if line.strip()]
+            checks.append(("중복 콜백 후에도 로그 1줄 유지(중복 기록 안 됨)", len(log_lines_after_dup) == 1))
+            checks.append(("중복 콜백 후에도 관리자 알림 1건 유지(중복 알림 안 됨)", len(admin_messages) == 1))
+            checks.append(("중복 콜백은 메시지 편집도 하지 않음", len(edits) == 0))
+
             # 2) 질문이 2개인 체크포인트(TBM) — 첫 질문 답하면 두 번째 질문으로 진행(아직 미완료)
             feedback_survey.maybe_trigger_checkpoint(222, "TBM 일지")
             edits.clear()
@@ -93,6 +106,30 @@ def run():
             checks.append(("스킵 후 completed True", cp2["completed"] is True))
             checks.append(("스킵해도 관리자 알림 감", len(admin_messages) == 1))
             checks.append(("fbskip: 접두사 아니면 False 반환", feedback_survey.handle_skip_callback(333, 333, 1, "reject:333") is False))
+
+            # 6) 관리자 알림(_notify_admin) 발송이 실패해도 완료 처리·로그 기록은 정상적으로 유지됨
+            def fake_send_admin_fails(chat_id, text, reply_markup=None):
+                if chat_id == feedback_survey.ADMIN_TELEGRAM_USER_ID:
+                    raise RuntimeError("관리자 알림 발송 실패 시뮬레이션")
+                # 체크포인트 트리거 등 일반 유저 대상 발송은 정상 동작(여기서는 검증 대상 아님)
+
+            feedback_survey.send_message = fake_send_admin_fails
+            with open(feedback_survey.FEEDBACK_LOG_FILE, "r", encoding="utf-8") as f:
+                log_count_before_admin_fail = len([line for line in f if line.strip()])
+            feedback_survey.maybe_trigger_checkpoint(555, "위험성평가표")
+            handled_admin_fail = feedback_survey.handle_callback_answer(555, 555, 1, "fb:R:0:0")
+            checks.append(("관리자 알림 실패해도 예외가 밖으로 전파되지 않고 True 반환", handled_admin_fail is True))
+            state = feedback_survey._load_state()
+            cp555 = state["555"]["위험성평가표"]
+            checks.append(("관리자 알림 실패해도 completed는 정상 저장됨", cp555["completed"] is True))
+            with open(feedback_survey.FEEDBACK_LOG_FILE, "r", encoding="utf-8") as f:
+                log_lines_after_admin_fail = [json.loads(line) for line in f if line.strip()]
+            checks.append(("관리자 알림 실패해도 로그 줄 수가 1건 늘어남(기록은 유지됨)",
+                            len(log_lines_after_admin_fail) == log_count_before_admin_fail + 1))
+            checks.append(("관리자 알림 실패해도 해당 로그 항목이 정확히 기록됨", any(
+                entry["user_id"] == 555 and entry["document_type"] == "위험성평가표"
+                for entry in log_lines_after_admin_fail
+            )))
         finally:
             feedback_survey.FEEDBACK_STATE_FILE = original_state_file
             feedback_survey.FEEDBACK_LOG_FILE = original_log_file
