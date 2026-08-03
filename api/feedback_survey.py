@@ -71,18 +71,28 @@ CHECKPOINTS = {
 }
 
 
+def _read_state_file():
+    """잠금 없는 파일 I/O. 호출자가 이미 _lock을 쥐고 있거나(쓰기와 묶어야
+    할 때), 잠금 없이 읽어도 되는 순수 조회 용도일 때 사용한다."""
+    if not os.path.exists(FEEDBACK_STATE_FILE):
+        return {}
+    with open(FEEDBACK_STATE_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_state_file(data):
+    """잠금 없는 파일 I/O. 호출자가 이미 _lock을 쥐고 있어야 한다."""
+    with open(FEEDBACK_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 def _load_state():
+    """읽기 전용 호출자(예: broadcast_pending_reminders)를 위한 잠금 포함
+    편의 래퍼. load→check→mutate→save를 한 번에 하는 함수는 이걸 쓰지 말고
+    _read_state_file/_write_state_file을 직접 하나의 with _lock: 블록 안에서
+    호출해 read-modify-write 전체 구간의 원자성을 보장해야 한다."""
     with _lock:
-        if not os.path.exists(FEEDBACK_STATE_FILE):
-            return {}
-        with open(FEEDBACK_STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-
-def _save_state(data):
-    with _lock:
-        with open(FEEDBACK_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        return _read_state_file()
 
 
 def _now_iso():
@@ -90,12 +100,15 @@ def _now_iso():
 
 
 def _build_keyboard(document_type, question_index, question):
+    # 옵션마다 한 줄(버튼 1개)로 배치한다 — 한 줄에 다 몰아넣으면 모바일에서
+    # 라벨이 잘릴 수 있고, 특히 지불 의향 질문(q4_willingness_to_pay)처럼
+    # 비즈니스적으로 중요한 응답이 잘리면 안 되기 때문이다.
     code = DOC_CODES[document_type]
     return {
-        "inline_keyboard": [[
-            {"text": opt, "callback_data": f"fb:{code}:{question_index}:{i}"}
+        "inline_keyboard": [
+            [{"text": opt, "callback_data": f"fb:{code}:{question_index}:{i}"}]
             for i, opt in enumerate(question["options"])
-        ]]
+        ]
     }
 
 
@@ -108,21 +121,26 @@ def _skip_keyboard(document_type):
 def maybe_trigger_checkpoint(user_id, document_type):
     """document_type이 CHECKPOINTS에 없으면 아무 것도 안 한다.
     이미 이 user_id·document_type 조합이 상태 파일에 있으면(완료/진행중 무관)
-    재발송하지 않는다. 실패해도 예외를 삼키고 로그만 남긴다."""
+    재발송하지 않는다. 실패해도 예외를 삼키고 로그만 남긴다.
+
+    읽기(트리거 여부 확인)부터 쓰기(상태 저장)까지 전체 구간을 _lock 하나로
+    감싼다 — 그렇지 않으면 같은 user_id·document_type에 대한 동시 호출이
+    둘 다 "아직 트리거 안 됨"을 보고 중복 발송할 수 있다."""
     if document_type not in CHECKPOINTS:
         return
     try:
-        state = _load_state()
-        if document_type in state.get(str(user_id), {}):
-            return
-        question = CHECKPOINTS[document_type]["questions"][0]
-        send_message(user_id, question["text"], reply_markup=_build_keyboard(document_type, 0, question))
-        state.setdefault(str(user_id), {})[document_type] = {
-            "triggered_at": _now_iso(),
-            "answers": {},
-            "completed": False,
-        }
-        _save_state(state)
+        with _lock:
+            state = _read_state_file()
+            if document_type in state.get(str(user_id), {}):
+                return
+            question = CHECKPOINTS[document_type]["questions"][0]
+            send_message(user_id, question["text"], reply_markup=_build_keyboard(document_type, 0, question))
+            state.setdefault(str(user_id), {})[document_type] = {
+                "triggered_at": _now_iso(),
+                "answers": {},
+                "completed": False,
+            }
+            _write_state_file(state)
     except Exception:
         logger.exception(
             "피드백 체크포인트 트리거 실패: user_id=%s document_type=%s", user_id, document_type
@@ -174,7 +192,12 @@ def _complete_and_notify(user_id, document_type, checkpoint_state):
 def handle_callback_answer(user_id, chat_id, message_id, callback_data):
     """callback_data 형식: "fb:<doc_code>:<question_index>:<option_index>".
     이 형식이 아니면 아무 것도 하지 않고 False를 반환한다(호출자가 다른
-    핸들러로 넘기게 하기 위함)."""
+    핸들러로 넘기게 하기 위함).
+
+    읽기(완료 여부 확인)부터 쓰기(답변 저장)까지 전체 구간을 _lock 하나로
+    감싼다 — 그렇지 않으면 같은 user_id의 거의 동시 콜백 두 건이 서로의
+    답변을 덮어쓰거나(last-writer-wins), 완료 여부 확인이 서로 stale한
+    상태를 볼 수 있다."""
     if not callback_data.startswith("fb:"):
         return False
     try:
@@ -186,51 +209,54 @@ def handle_callback_answer(user_id, chat_id, message_id, callback_data):
         question = checkpoint["questions"][q_index]
         answer_text = question["options"][opt_index]
 
-        state = _load_state()
-        checkpoint_state = state.setdefault(str(user_id), {}).setdefault(
-            document_type, {"triggered_at": _now_iso(), "answers": {}, "completed": False}
-        )
-        if checkpoint_state.get("completed"):
-            # 이미 완료된 체크포인트에 대한 중복 콜백(웹훅 재전송, 더블탭 등).
-            # 재처리하면 로그·관리자 알림이 중복되므로 조용히 무시한다.
-            return True
-        checkpoint_state["answers"][question["key"]] = answer_text
+        with _lock:
+            state = _read_state_file()
+            checkpoint_state = state.setdefault(str(user_id), {}).setdefault(
+                document_type, {"triggered_at": _now_iso(), "answers": {}, "completed": False}
+            )
+            if checkpoint_state.get("completed"):
+                # 이미 완료된 체크포인트에 대한 중복 콜백(웹훅 재전송, 더블탭 등).
+                # 재처리하면 로그·관리자 알림이 중복되므로 조용히 무시한다.
+                return True
+            checkpoint_state["answers"][question["key"]] = answer_text
 
-        questions = checkpoint["questions"]
-        next_index = q_index + 1
-        if next_index < len(questions):
-            next_question = questions[next_index]
-            reply_text = next_question["text"]
-            reply_markup = _build_keyboard(document_type, next_index, next_question)
-        elif "free_text_prompt" in checkpoint:
-            checkpoint_state["awaiting_free_text"] = True
-            reply_text = checkpoint["free_text_prompt"]
-            reply_markup = _skip_keyboard(document_type)
-        else:
-            _complete_and_notify(user_id, document_type, checkpoint_state)
-            reply_text = "답변 감사합니다!"
-            reply_markup = None
+            questions = checkpoint["questions"]
+            next_index = q_index + 1
+            if next_index < len(questions):
+                next_question = questions[next_index]
+                reply_text = next_question["text"]
+                reply_markup = _build_keyboard(document_type, next_index, next_question)
+            elif "free_text_prompt" in checkpoint:
+                checkpoint_state["awaiting_free_text"] = True
+                reply_text = checkpoint["free_text_prompt"]
+                reply_markup = _skip_keyboard(document_type)
+            else:
+                _complete_and_notify(user_id, document_type, checkpoint_state)
+                reply_text = "답변 감사합니다!"
+                reply_markup = None
 
-        _save_state(state)
-        edit_message_text(chat_id, message_id, reply_text, reply_markup=reply_markup)
+            _write_state_file(state)
+            edit_message_text(chat_id, message_id, reply_text, reply_markup=reply_markup)
     except Exception:
         logger.exception("피드백 콜백 처리 실패: user_id=%s data=%s", user_id, callback_data)
     return True
 
 
 def handle_skip_callback(user_id, chat_id, message_id, callback_data):
-    """callback_data 형식: "fbskip:<doc_code>". 이 형식이 아니면 False 반환."""
+    """callback_data 형식: "fbskip:<doc_code>". 이 형식이 아니면 False 반환.
+    handle_callback_answer와 동일한 이유로 읽기~쓰기 전체를 _lock으로 감싼다."""
     if not callback_data.startswith("fbskip:"):
         return False
     try:
         _, code = callback_data.split(":")
         document_type = CODE_TO_DOC[code]
-        state = _load_state()
-        checkpoint_state = state.get(str(user_id), {}).get(document_type)
-        if checkpoint_state and not checkpoint_state.get("completed"):
-            _complete_and_notify(user_id, document_type, checkpoint_state)
-            _save_state(state)
-        edit_message_text(chat_id, message_id, "답변 감사합니다!")
+        with _lock:
+            state = _read_state_file()
+            checkpoint_state = state.get(str(user_id), {}).get(document_type)
+            if checkpoint_state and not checkpoint_state.get("completed"):
+                _complete_and_notify(user_id, document_type, checkpoint_state)
+                _write_state_file(state)
+            edit_message_text(chat_id, message_id, "답변 감사합니다!")
     except Exception:
         logger.exception("피드백 스킵 처리 실패: user_id=%s data=%s", user_id, callback_data)
     return True
@@ -239,17 +265,19 @@ def handle_skip_callback(user_id, chat_id, message_id, callback_data):
 def handle_free_text(user_id, chat_id, text):
     """이 user_id가 지금 어떤 체크포인트에서 자유의견을 기다리는 중이면
     처리하고 True를 반환한다. 아니면 아무 것도 하지 않고 False를 반환한다
-    (호출자가 기존 텍스트 핸들링으로 넘기게 하기 위함)."""
+    (호출자가 기존 텍스트 핸들링으로 넘기게 하기 위함).
+    handle_callback_answer와 동일한 이유로 읽기~쓰기 전체를 _lock으로 감싼다."""
     try:
-        state = _load_state()
-        user_state = state.get(str(user_id), {})
-        for document_type, checkpoint_state in user_state.items():
-            if checkpoint_state.get("awaiting_free_text"):
-                checkpoint_state["free_text"] = text
-                _complete_and_notify(user_id, document_type, checkpoint_state)
-                _save_state(state)
-                send_message(chat_id, "답변 감사합니다!")
-                return True
+        with _lock:
+            state = _read_state_file()
+            user_state = state.get(str(user_id), {})
+            for document_type, checkpoint_state in user_state.items():
+                if checkpoint_state.get("awaiting_free_text"):
+                    checkpoint_state["free_text"] = text
+                    _complete_and_notify(user_id, document_type, checkpoint_state)
+                    _write_state_file(state)
+                    send_message(chat_id, "답변 감사합니다!")
+                    return True
     except Exception:
         logger.exception("피드백 자유의견 처리 실패: user_id=%s", user_id)
         return True
