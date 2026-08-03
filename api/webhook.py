@@ -111,7 +111,8 @@ def _handle_callback_query(callback_query):
     if action == "approve":
         pending = get_pending_request(user_id)
         username = pending.get("username") if pending else None
-        add_allowed_user(user_id, username=username)
+        first_name = pending.get("first_name") if pending else None
+        add_allowed_user(user_id, username=username, first_name=first_name)
         remove_pending_request(user_id)
         edit_message_text(message["chat"]["id"], message["message_id"], f"✅ 승인 완료 (id: {user_id})")
         send_message(user_id, "✅ 승인되었습니다! 메뉴 버튼으로 미니앱을 사용하실 수 있습니다.")

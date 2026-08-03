@@ -40,11 +40,19 @@ def is_allowed(user_id):
     return str(user_id) in data
 
 
-def add_allowed_user(user_id, username=None):
+def add_allowed_user(user_id, username=None, first_name=None):
     with _lock:
         data = _load(ALLOWED_USERS_FILE)
-        data[str(user_id)] = {"username": username}
+        data[str(user_id)] = {"username": username, "first_name": first_name}
         _save(ALLOWED_USERS_FILE, data)
+
+
+def resolve_display_name(user_id):
+    """피드백 로그 등에서 쓸 표시 이름. username > first_name > user_id 문자열 순."""
+    with _lock:
+        data = _load(ALLOWED_USERS_FILE)
+    record = data.get(str(user_id), {})
+    return record.get("username") or record.get("first_name") or str(user_id)
 
 
 def get_allowed_users():
