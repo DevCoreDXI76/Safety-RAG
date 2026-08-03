@@ -234,3 +234,23 @@ def handle_skip_callback(user_id, chat_id, message_id, callback_data):
     except Exception:
         logger.exception("피드백 스킵 처리 실패: user_id=%s data=%s", user_id, callback_data)
     return True
+
+
+def handle_free_text(user_id, chat_id, text):
+    """이 user_id가 지금 어떤 체크포인트에서 자유의견을 기다리는 중이면
+    처리하고 True를 반환한다. 아니면 아무 것도 하지 않고 False를 반환한다
+    (호출자가 기존 텍스트 핸들링으로 넘기게 하기 위함)."""
+    try:
+        state = _load_state()
+        user_state = state.get(str(user_id), {})
+        for document_type, checkpoint_state in user_state.items():
+            if checkpoint_state.get("awaiting_free_text"):
+                checkpoint_state["free_text"] = text
+                _complete_and_notify(user_id, document_type, checkpoint_state)
+                _save_state(state)
+                send_message(chat_id, "답변 감사합니다!")
+                return True
+    except Exception:
+        logger.exception("피드백 자유의견 처리 실패: user_id=%s", user_id)
+        return True
+    return False
