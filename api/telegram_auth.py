@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common import DATA_DIR, KST
-from api.access_control import is_allowed, register_pending_request
+from api.access_control import is_allowed, register_pending_request, backfill_first_name
 
 load_dotenv()
 
@@ -99,5 +99,11 @@ def require_telegram_auth(x_telegram_init_data: str = Header(...)) -> dict:
             else "사용 승인 대기 중입니다. 관리자 승인 후 다시 시도해주세요."
         )
         raise HTTPException(status_code=403, detail=detail)
+
+    # 이 기능(피드백 설문 등)이 배포되기 전에 이미 승인된 베타 테스터는
+    # allowed_users.json에 first_name이 없을 수 있다(구버전 2키 스키마).
+    # 매 호출마다 텔레그램이 넘겨주는 first_name으로 조용히 보강해
+    # resolve_display_name이 언제까지나 user_id 숫자로 폴백하지 않게 한다.
+    backfill_first_name(user_id, user.get("first_name"))
 
     return {"user_id": user_id, "username": user.get("username"), "first_name": user.get("first_name")}

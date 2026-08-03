@@ -47,6 +47,23 @@ def add_allowed_user(user_id, username=None, first_name=None):
         _save(ALLOWED_USERS_FILE, data)
 
 
+def backfill_first_name(user_id, first_name):
+    """구버전(2키 스키마) 때 승인된 사용자는 allowed_users.json에 first_name이
+    없다. Telegram이 이번 호출에서 first_name을 새로 알려줬고, 저장된 레코드에
+    아직 first_name이 없을 때만 채워 넣는다. username은 건드리지 않는다.
+    저장된 레코드가 없거나(비정상 상태) 이미 first_name이 있거나, 이번에
+    들어온 값이 비어있으면 아무 것도 하지 않는다."""
+    if not first_name:
+        return
+    with _lock:
+        data = _load(ALLOWED_USERS_FILE)
+        record = data.get(str(user_id))
+        if record is None or record.get("first_name"):
+            return
+        record["first_name"] = first_name
+        _save(ALLOWED_USERS_FILE, data)
+
+
 def resolve_display_name(user_id):
     """피드백 로그 등에서 쓸 표시 이름. username > first_name > user_id 문자열 순."""
     with _lock:
