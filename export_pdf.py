@@ -20,7 +20,7 @@ from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.pagesizes import A4, landscape, portrait
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
@@ -78,6 +78,16 @@ _LINE_BREAK_RE = re.compile(r"<br\s*/?>|\n")
 # — 흰색 쪽으로 45% 블렌드한 톤. PDF 전용이며 document_styles.py는 건드리지
 # 않는다(XLSX/HWPX 헤더색은 그대로 유지).
 _PDF_HEADER_FILL = "8DA1C5"
+
+
+# 위험성평가표는 열이 많은 표(최대 13열)라 가로형을 유지해야 하지만,
+# 표준 작업계획서·TBM 일지는 대부분 서술형 문단 + 좁은 표라 세로형이 더
+# 자연스럽다(2026-08-04 요청).
+_PORTRAIT_DOCUMENT_TYPES = {"표준 작업계획서", "TBM 일지"}
+
+
+def _page_size_for(document_type):
+    return portrait(A4) if document_type in _PORTRAIT_DOCUMENT_TYPES else landscape(A4)
 
 
 _TITLE_FONT_SIZE = 28
@@ -273,7 +283,7 @@ def record_to_pdf_bytes(record):
     # title/author: reportlab이 PDF 메타데이터(Author/Title)에 그대로 채워
     # 넣는 표준 생성자 인자 — 이전 QA에서 지적된 "메타데이터 공란" 문제 해결.
     doc = SimpleDocTemplate(
-        buffer, pagesize=landscape(A4),
+        buffer, pagesize=_page_size_for(document_type),
         title=document_type, author="Safety-RAG",
     )
     elements = [_TitleFlowable(document_type), Spacer(1, 12)]

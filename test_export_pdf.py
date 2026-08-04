@@ -16,7 +16,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import pypdf
-from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.pagesizes import A4, landscape, portrait
 
 from export_pdf import (
     _BODY_STYLE, _BOX_TITLE_STYLE, _build_table_element, _CELL_STYLE_CENTER, _CELL_STYLE_LEFT,
@@ -262,18 +262,19 @@ def run():
     )
     checks.append(("헤더 행(열 제목)이 모든 페이지에 반복됨", pages_with_header == len(many_rows_reader.pages)))
 
-    # --- 3개 문서유형 모두 A4(가로) 페이지 크기로 통일됨 ---
-    expected_size = landscape(A4)
-    for doc_type, draft in [
-        ("위험성평가표", "| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남 |\n"),
-        ("표준 작업계획서", "| 항목 | 내용 |\n|------|------|\n| 작업유형 | 굴착작업 |\n"),
-        ("TBM 일지", "| 항목 | 내용 |\n|------|------|\n| 일자 | 2026-08-04 |\n"),
+    # --- 페이지 크기는 모두 A4, 방향만 문서유형별로 다름(2026-08-04 요청):
+    # 위험성평가표는 열이 많아 가로형 유지, 표준작업계획서/TBM일지는 세로형 ---
+    for doc_type, draft, expected_size in [
+        ("위험성평가표", "| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남 |\n", landscape(A4)),
+        ("표준 작업계획서", "| 항목 | 내용 |\n|------|------|\n| 작업유형 | 굴착작업 |\n", portrait(A4)),
+        ("TBM 일지", "| 항목 | 내용 |\n|------|------|\n| 일자 | 2026-08-04 |\n", portrait(A4)),
     ]:
         doc_pdf = record_to_pdf_bytes({"document_type": doc_type, "draft": draft})
         doc_reader = pypdf.PdfReader(io.BytesIO(doc_pdf))
         box = doc_reader.pages[0].mediabox
         size_ok = abs(float(box.width) - expected_size[0]) < 1 and abs(float(box.height) - expected_size[1]) < 1
-        checks.append((f"{doc_type} PDF 페이지 크기가 A4(가로)와 일치", size_ok))
+        orientation = "세로형" if expected_size == portrait(A4) else "가로형"
+        checks.append((f"{doc_type} PDF 페이지 크기가 A4({orientation})와 일치", size_ok))
 
     print()
     all_ok = True
