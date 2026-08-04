@@ -100,10 +100,10 @@ def run():
     # --- 문서 제목: 가운데정렬 + 밑줄 + 28pt + 굵게(faux-bold 2회 겹쳐 그리기) ---
     checks.append(("여백은 상하좌우 15pt로 통일", _PAGE_MARGIN_PT == 15))
     checks.append(("제목 폰트 크기 28pt", _TitleFlowable("위험성평가표").font_size == 28))
-    checks.append(("박스 제목(서브 제목) 폰트 크기 18pt", _BOX_TITLE_STYLE.fontSize == 18))
-    checks.append(("표 셀(왼쪽정렬) 폰트 크기 14pt", _CELL_STYLE_LEFT.fontSize == 14))
-    checks.append(("표 셀(가운데정렬) 폰트 크기 14pt", _CELL_STYLE_CENTER.fontSize == 14))
-    checks.append(("서술형 본문 폰트 크기 14pt", _BODY_STYLE.fontSize == 14))
+    checks.append(("박스 제목(서브 제목) 폰트 크기 16pt", _BOX_TITLE_STYLE.fontSize == 16))
+    checks.append(("표 셀(왼쪽정렬) 폰트 크기 12pt", _CELL_STYLE_LEFT.fontSize == 12))
+    checks.append(("표 셀(가운데정렬) 폰트 크기 12pt", _CELL_STYLE_CENTER.fontSize == 12))
+    checks.append(("서술형 본문 폰트 크기 12pt", _BODY_STYLE.fontSize == 12))
     checks.append(("가운데정렬 계산: 텍스트 폭이 가용폭보다 작을 때 중앙 배치", _center_x(100, 300) == 100))
     checks.append(("가운데정렬 계산: 텍스트가 가용폭보다 크면 0에서 시작(음수 금지)", _center_x(400, 300) == 0))
 

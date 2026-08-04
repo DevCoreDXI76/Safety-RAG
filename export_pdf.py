@@ -35,12 +35,12 @@ from markdown_tables import parse_markdown_blocks
 _FONT_NAME = "HYSMyeongJo-Medium"
 pdfmetrics.registerFont(UnicodeCIDFont(_FONT_NAME))
 
-_BODY_STYLE = ParagraphStyle("body", fontName=_FONT_NAME, fontSize=14, leading=18)
-_CELL_STYLE_LEFT = ParagraphStyle("cell_left", fontName=_FONT_NAME, fontSize=14, leading=18, alignment=TA_LEFT)
-_CELL_STYLE_CENTER = ParagraphStyle("cell_center", fontName=_FONT_NAME, fontSize=14, leading=18, alignment=TA_CENTER)
+_BODY_STYLE = ParagraphStyle("body", fontName=_FONT_NAME, fontSize=12, leading=15)
+_CELL_STYLE_LEFT = ParagraphStyle("cell_left", fontName=_FONT_NAME, fontSize=12, leading=15, alignment=TA_LEFT)
+_CELL_STYLE_CENTER = ParagraphStyle("cell_center", fontName=_FONT_NAME, fontSize=12, leading=15, alignment=TA_CENTER)
 _FOOTNOTE_STYLE = ParagraphStyle("footnote", fontName=_FONT_NAME, fontSize=8, leading=10, textColor=colors.grey)
 _BOX_TITLE_STYLE = ParagraphStyle(
-    "box_title", fontName=_FONT_NAME, fontSize=18, leading=22,
+    "box_title", fontName=_FONT_NAME, fontSize=16, leading=20,
     alignment=TA_LEFT, spaceBefore=14, spaceAfter=6, keepWithNext=True,
 )
 
@@ -49,7 +49,7 @@ _CELL_SIDE_PADDING_PT = 3  # LEFTPADDING/RIGHTPADDING 각각 — _CELL_H_PADDING
 _BASE_TABLE_STYLE_COMMANDS = [
     ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
     ("FONTNAME", (0, 0), (-1, -1), _FONT_NAME),
-    ("FONTSIZE", (0, 0), (-1, -1), 14),
+    ("FONTSIZE", (0, 0), (-1, -1), 12),
     ("VALIGN", (0, 0), (-1, -1), "TOP"),
     # reportlab Table의 기본 LEFTPADDING/RIGHTPADDING(각 6pt)을 그대로 두면
     # _content_aware_col_widths가 계산한 "글자가 들어갈 폭"보다 실제 사용
