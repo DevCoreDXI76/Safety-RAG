@@ -96,6 +96,18 @@ _SIGNATURE_TABLE_KEYWORDS = ("참석자", "서명")
 _SIGNATURE_TABLE_MIN_ROWS = 10
 _SIGNATURE_ROW_HEIGHT_PT = 26
 
+# "(빈칸 - 현장 기재)"류 플레이스홀더는 실제 내용이 아니라 안내문이므로
+# 연한 회색으로 구분해 표시한다(2026-08-04 요청). escape() 이후의 텍스트에
+# 적용해야 한다 — 여기서 삽입하는 <font> 태그는 escape 대상이 아니다.
+_PLACEHOLDER_RE = re.compile(r"\([^()]*빈칸[^()]*\)")
+_PLACEHOLDER_COLOR = "999999"
+
+
+def _highlight_placeholders(escaped_text):
+    return _PLACEHOLDER_RE.sub(
+        lambda m: f'<font color="#{_PLACEHOLDER_COLOR}">{m.group(0)}</font>', escaped_text
+    )
+
 
 def _is_signature_heading(heading_text):
     return heading_text is not None and any(k in heading_text for k in _SIGNATURE_TABLE_KEYWORDS)
@@ -309,7 +321,7 @@ def _build_table_element(table, frame_width, document_type, is_signature_table=F
                 fill_hex = _PDF_HEADER_FILL
             cell_style = _CELL_STYLE_CENTER if center else _CELL_STYLE_LEFT
             safe_text = _fit_cell_text(text, col_widths[col_index], cell_style.fontSize)
-            row_cells.append(Paragraph(escape(safe_text), cell_style))
+            row_cells.append(Paragraph(_highlight_placeholders(escape(safe_text)), cell_style))
 
             if fill_hex:
                 table_style_commands.append(
@@ -354,7 +366,7 @@ def _build_elements(blocks, document_type, doc_width):
             elements.append(Indenter(left=_CONTENT_INDENT_PT))
             indent_open = True
         elif block["type"] == "text":
-            body_text = escape(block["text"]).replace("\n", "<br/>")
+            body_text = _highlight_placeholders(escape(block["text"]).replace("\n", "<br/>"))
             elements.append(Paragraph(body_text, _BODY_STYLE))
             elements.append(Spacer(1, 8))
         else:

@@ -21,8 +21,8 @@ from reportlab.lib.pagesizes import A4, landscape, portrait
 from reportlab.platypus import Indenter, Table
 from export_pdf import (
     _BODY_STYLE, _BOX_TITLE_STYLE, _build_elements, _build_table_element, _CELL_STYLE_CENTER,
-    _CELL_STYLE_LEFT, _center_x, _CONTENT_INDENT_PT, _hex_color, _PAGE_MARGIN_PT, _PDF_HEADER_FILL,
-    _TitleFlowable, record_to_pdf_bytes,
+    _CELL_STYLE_LEFT, _center_x, _CONTENT_INDENT_PT, _hex_color, _highlight_placeholders,
+    _PAGE_MARGIN_PT, _PDF_HEADER_FILL, _PLACEHOLDER_COLOR, _TitleFlowable, record_to_pdf_bytes,
 )
 from document_styles import STYLE_SPECS
 from markdown_tables import parse_markdown_blocks, parse_markdown_tables
@@ -248,6 +248,35 @@ def run():
     prose_reader = pypdf.PdfReader(io.BytesIO(prose_pdf))
     prose_text = "".join(page.extract_text() for page in prose_reader.pages)
     checks.append(("표가 아닌 서술형 섹션의 본문 내용이 PDF에 실제로 그려짐", "무전압 상태" in prose_text))
+
+    # --- "(빈칸 - 현장 기재)" 류 플레이스홀더 텍스트는 연한 회색으로 처리됨 ---
+    highlighted = _highlight_placeholders("현장명 (빈칸 - 현장 기재) 확인 필요")
+    checks.append((
+        "플레이스홀더 구간이 <font color=...>로 감싸짐",
+        f'<font color="#{_PLACEHOLDER_COLOR}">(빈칸 - 현장 기재)</font>' in highlighted,
+    ))
+    checks.append((
+        "플레이스홀더 앞뒤 일반 텍스트는 그대로 유지됨",
+        highlighted.startswith("현장명 ") and highlighted.endswith(" 확인 필요"),
+    ))
+    checks.append((
+        "플레이스홀더가 없는 텍스트는 변형 없이 그대로",
+        _highlight_placeholders("일반 텍스트입니다") == "일반 텍스트입니다",
+    ))
+
+    placeholder_record = {
+        "document_type": "위험성평가표",
+        "draft": "| 항목 | 내용 |\n|------|------|\n| 평가일자 | (빈칸 - 현장 기재) |\n",
+    }
+    placeholder_tables = parse_markdown_tables(placeholder_record["draft"])
+    placeholder_flowable, _ = _build_table_element(
+        placeholder_tables[0], frame_width, placeholder_record["document_type"]
+    )
+    placeholder_cell_text = placeholder_flowable._cellvalues[1][1].text
+    checks.append((
+        "표 셀 안의 플레이스홀더도 회색 처리됨",
+        f'<font color="#{_PLACEHOLDER_COLOR}">' in placeholder_cell_text,
+    ))
 
     # --- 표는 명시적으로 좌측정렬(hAlign)됨, 박스 제목 아래 내용은 들여쓰기됨 ---
     indent_blocks = parse_markdown_blocks(SAMPLE_RECORD_WITH_HEADING["draft"])
