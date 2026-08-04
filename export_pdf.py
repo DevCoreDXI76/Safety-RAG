@@ -340,6 +340,12 @@ def _build_table_element(
             # (2026-08-04 실사용 PDF 확인 후 "너무 진하다"는 피드백으로 추가).
             if fill_hex == style.header_fill:
                 fill_hex = _PDF_HEADER_FILL
+            elif fill_hex is None and not is_header_row and not is_kv_table:
+                # "3. 참고 - 위험성 추정 행렬"처럼 헤더명이 "위험등급"이 아니라
+                # risk_grade_column_indices로는 안 잡히지만, 셀 값 자체가 등급
+                # 문자(A/B/C)인 표도 본문 위험성평가표와 같은 색으로 칠한다
+                # (2026-08-05 요청).
+                fill_hex = style.risk_grade_colors.get(text.strip().upper())
             cell_style = _CELL_STYLE_CENTER if center else _CELL_STYLE_LEFT
             safe_text = _fit_cell_text(text, col_widths[col_index], cell_style.fontSize)
             row_cells.append(Paragraph(_highlight_placeholders(escape(safe_text)), cell_style))

@@ -279,6 +279,39 @@ def run():
         f'<font color="#{_PLACEHOLDER_COLOR}">' in placeholder_cell_text,
     ))
 
+    # --- "3. 참고 - 위험성 추정 행렬" 같은 표는 헤더명이 "위험등급"이 아니라
+    # risk_grade_column_indices로 안 잡히지만, 셀 값 자체가 A/B/C 등급이면
+    # 본문 위험성평가표와 같은 색으로 칠해져야 한다 ---
+    matrix_record_draft = (
+        "| 빈도\\강도 | 1(낮음) | 2(보통) | 3(높음) |\n"
+        "|------|------|------|------|\n"
+        "| 1(낮음) | C | C | B |\n"
+        "| 2(보통) | C | B | A |\n"
+        "| 3(높음) | B | A | A |\n"
+    )
+    matrix_tables = parse_markdown_tables(matrix_record_draft)
+    matrix_flowable, _ = _build_table_element(matrix_tables[0], frame_width, "위험성평가표")
+    matrix_bg_commands = matrix_flowable._bkgrndcmds
+    risk_style = STYLE_SPECS["위험성평가표"]
+    checks.append((
+        "위험성 추정 행렬의 'A' 셀(열3,행2)에 A등급 배경색 적용",
+        any(
+            cmd[1] == (3, 2) and cmd[-1] == _hex_color(risk_style.risk_grade_colors["A"])
+            for cmd in matrix_bg_commands
+        ),
+    ))
+    checks.append((
+        "위험성 추정 행렬의 'B' 셀(열3,행1)에 B등급 배경색 적용",
+        any(
+            cmd[1] == (3, 1) and cmd[-1] == _hex_color(risk_style.risk_grade_colors["B"])
+            for cmd in matrix_bg_commands
+        ),
+    ))
+    checks.append((
+        "위험성 추정 행렬의 행 라벨 열(0)은 A/B/C가 아니라 색칠되지 않음",
+        not any(cmd[1][0] == 0 and cmd[1][1] > 0 for cmd in matrix_bg_commands),
+    ))
+
     # --- 표는 명시적으로 좌측정렬(hAlign)됨, 박스 제목 아래 내용은 들여쓰기됨 ---
     indent_blocks = parse_markdown_blocks(SAMPLE_RECORD_WITH_HEADING["draft"])
     indent_elements = _build_elements(indent_blocks, SAMPLE_RECORD_WITH_HEADING["document_type"], frame_width)
