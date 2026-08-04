@@ -79,9 +79,12 @@ def run():
                     xlsx_a_rule_ok = True
                     break
     checks.append(("XLSX: 위험등급 A 조건부서식 존재하고 색상이 스펙과 일치", xlsx_a_rule_ok))
+    # 2026-08-05부터 위험성평가표 XLSX는 열너비가 정적 스펙이 아니라 셀 내용
+    # 글자수 기반으로 조정된다(요청) — 이 표의 "위험요인" 열(B, 정적 스펙은
+    # 6)은 "지게차 충돌" 등 실제 내용이 더 길어 스펙보다 넓어져야 한다.
     checks.append((
-        "XLSX: 열너비가 스펙과 일치(1열=빈도폭이 아니라 위험요인 열 폭)",
-        ws.column_dimensions["A"].width == style.column_widths[0],
+        "XLSX: 위험성평가표는 열너비가 정적 스펙이 아니라 셀 내용 기반으로 조정됨",
+        ws.column_dimensions["B"].width != style.column_widths[0],
     ))
 
     # PDF: 같은 표를 만들 때 위험등급 A 배경색 명령이 들어가고, 색상이 스펙과 일치하는지

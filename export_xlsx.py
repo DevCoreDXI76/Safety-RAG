@@ -9,6 +9,7 @@ openpyxl 워크북으로 바인딩하고, xlsx 파일 바이트를 반환한다.
 
 import io
 import re
+import unicodedata
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
@@ -22,9 +23,15 @@ from document_styles import (
 )
 from markdown_tables import parse_markdown_blocks
 
-_HEADER_FONT = Font(bold=True)
-_BOX_TITLE_FONT = Font(size=18, bold=True, color="000000")
+_TITLE_FONT = Font(size=28, bold=True, underline="single")
+_ALIGN_TITLE_DOC = Alignment(horizontal="center", vertical="center")
+
+_BOX_TITLE_FONT = Font(size=16, bold=True, color="000000")
 _ALIGN_TITLE = Alignment(horizontal="left", vertical="center")
+
+_BODY_FONT_SIZE = 12
+_HEADER_FONT = Font(size=_BODY_FONT_SIZE, bold=True)
+_BODY_FONT = Font(size=_BODY_FONT_SIZE)
 
 _THIN_SIDE = Side(style="thin")
 _THIN_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_THIN_SIDE)
@@ -35,6 +42,39 @@ _ALIGN_LEFT_TOP = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
 _INVALID_SHEET_CHARS_RE = re.compile(r"[:\\/?*\[\]]")
 _COMMENT_AUTHOR = "safety-rag"
+
+# 모든 내용을 B열부터 쓰고 A열은 공란(여백)으로 남긴다(2026-08-05 요청).
+_COL_OFFSET = 1
+_COL_A_WIDTH = 3
+
+_CONTENT_AWARE_WIDTH_DOCUMENT_TYPES = {"위험성평가표"}
+_MIN_EXCEL_COL_WIDTH = 6
+_MAX_EXCEL_COL_WIDTH = 60
+_EXCEL_COL_WIDTH_PADDING = 2
+_LINE_BREAK_RE = re.compile(r"<br\s*/?>|\n")
+
+
+def _text_width_units(text):
+    """한글 등 전각 문자는 2칸, 그 외(영문·숫자 등)는 1칸으로 계산한 근사 폭."""
+    lines = _LINE_BREAK_RE.split(text) if text else [""]
+    widest = 0
+    for line in lines:
+        units = sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in line)
+        widest = max(widest, units)
+    return widest
+
+
+def _content_aware_excel_widths(table_blocks, ncols):
+    """
+    표 전체(같은 열 위치를 공유하는 모든 표)에서 각 열의 가장 넓은 셀 내용을
+    기준으로 엑셀 열 폭을 정한다(2026-08-05 요청, 위험성평가표 전용).
+    """
+    widths = [_MIN_EXCEL_COL_WIDTH] * ncols
+    for tb in table_blocks:
+        for row in tb["rows"]:
+            for col in range(min(len(row), ncols)):
+                widths[col] = max(widths[col], _text_width_units(row[col]))
+    return [min(w + _EXCEL_COL_WIDTH_PADDING, _MAX_EXCEL_COL_WIDTH) for w in widths]
 
 
 def _fill(hex_color):
@@ -66,20 +106,23 @@ def _apply_print_settings(ws, title_row=None):
 def record_to_xlsx_bytes(record):
     """
     record["draft"]에서 헤딩(박스 제목)·표·서술형 문단을 순서대로 시트에
-    채운다. 표가 여러 개면 표 사이에 빈 행 하나를 둔다. draft가 완전히
-    비어있는 경우(이론상 거의 없음)만 원문 그대로 A1에 넣는다.
+    채운다. 맨 위에 문서 제목(PDF와 동일하게 28pt·굵게·밑줄)을 두고, 모든
+    내용은 A열을 공란으로 남긴 채 B열부터 쓴다(2026-08-05 요청). 표가
+    여러 개면 표 사이에 빈 행 하나를 둔다. draft가 완전히 비어있는
+    경우(이론상 거의 없음)만 원문 그대로 A1에 넣는다.
     """
     blocks = parse_markdown_blocks(record["draft"])
-    style = get_style(record["document_type"])
+    document_type = record["document_type"]
+    style = get_style(document_type)
 
     header_fill = _fill(style.header_fill)
-    data_header_font = Font(bold=True, color=style.header_font_color)
+    data_header_font = Font(size=_BODY_FONT_SIZE, bold=True, color=style.header_font_color)
     kv_header_fill = _fill(style.kv_header_fill)
     risk_fills = {grade: _fill(hex_color) for grade, hex_color in style.risk_grade_colors.items()}
 
     wb = Workbook()
     ws = wb.active
-    ws.title = _sheet_title(record["document_type"])
+    ws.title = _sheet_title(document_type)
 
     if not blocks:
         ws.cell(row=1, column=1, value=record["draft"])
@@ -94,30 +137,48 @@ def record_to_xlsx_bytes(record):
     table_blocks = [b for b in blocks if b["type"] == "table"]
     max_col_count = max((len(row) for tb in table_blocks for row in tb["rows"]), default=1)
 
-    column_widths = list(style.column_widths)
-    current_row = 1
+    if document_type in _CONTENT_AWARE_WIDTH_DOCUMENT_TYPES:
+        column_widths = _content_aware_excel_widths(table_blocks, max_col_count)
+    else:
+        column_widths = list(style.column_widths)
+        while len(column_widths) < max_col_count:
+            column_widths.append(DEFAULT_COLUMN_WIDTH)
+
+    ws.column_dimensions["A"].width = _COL_A_WIDTH
+
+    title_cell = ws.cell(row=1, column=1 + _COL_OFFSET, value=document_type)
+    title_cell.font = _TITLE_FONT
+    title_cell.alignment = _ALIGN_TITLE_DOC
+    ws.merge_cells(
+        start_row=1, start_column=1 + _COL_OFFSET, end_row=1, end_column=max_col_count + _COL_OFFSET
+    )
+
+    current_row = 2
     table_index = 0
     freeze_row = None
     risk_score_ranges = []  # (col_letter, first_data_row, last_data_row)
 
     for block in blocks:
         if block["type"] == "heading":
-            title_cell = ws.cell(row=current_row, column=1, value=block["text"])
+            title_cell = ws.cell(row=current_row, column=1 + _COL_OFFSET, value=block["text"])
             title_cell.font = _BOX_TITLE_FONT
             title_cell.alignment = _ALIGN_TITLE
             if max_col_count > 1:
                 ws.merge_cells(
-                    start_row=current_row, start_column=1, end_row=current_row, end_column=max_col_count
+                    start_row=current_row, start_column=1 + _COL_OFFSET,
+                    end_row=current_row, end_column=max_col_count + _COL_OFFSET,
                 )
             current_row += 1
             continue
 
         if block["type"] == "text":
-            text_cell = ws.cell(row=current_row, column=1, value=block["text"])
+            text_cell = ws.cell(row=current_row, column=1 + _COL_OFFSET, value=block["text"])
+            text_cell.font = _BODY_FONT
             text_cell.alignment = _ALIGN_LEFT_TOP
             if max_col_count > 1:
                 ws.merge_cells(
-                    start_row=current_row, start_column=1, end_row=current_row, end_column=max_col_count
+                    start_row=current_row, start_column=1 + _COL_OFFSET,
+                    end_row=current_row, end_column=max_col_count + _COL_OFFSET,
                 )
             current_row += 2  # 다음 블록과 구분되도록 빈 행 하나
             continue
@@ -137,7 +198,7 @@ def record_to_xlsx_bytes(record):
             for col_idx, value in enumerate(row_cells, start=1):
                 number, note = parse_ai_score_cell(value)
                 cell = ws.cell(
-                    row=current_row, column=col_idx,
+                    row=current_row, column=col_idx + _COL_OFFSET,
                     value=number if number is not None else value,
                 )
                 if note:
@@ -153,12 +214,15 @@ def record_to_xlsx_bytes(record):
                         if is_header:
                             cell.font = _HEADER_FONT
                             cell.fill = kv_header_fill
+                        else:
+                            cell.font = _BODY_FONT
                         cell.alignment = _ALIGN_LEFT_CENTER
                 elif is_header:
                     cell.font = data_header_font
                     cell.fill = header_fill
                     cell.alignment = _ALIGN_CENTER
                 else:
+                    cell.font = _BODY_FONT
                     header_text = headers_base[col_idx - 1] if col_idx - 1 < len(headers_base) else ""
                     cell.alignment = (
                         _ALIGN_CENTER if header_text.lower() in CENTER_ALIGN_HEADERS else _ALIGN_LEFT_TOP
@@ -166,7 +230,8 @@ def record_to_xlsx_bytes(record):
 
             if is_kv_table and max_col_count > 2:
                 ws.merge_cells(
-                    start_row=current_row, start_column=2, end_row=current_row, end_column=max_col_count
+                    start_row=current_row, start_column=2 + _COL_OFFSET,
+                    end_row=current_row, end_column=max_col_count + _COL_OFFSET,
                 )
 
             current_row += 1
@@ -176,7 +241,9 @@ def record_to_xlsx_bytes(record):
 
         if risk_grade_col_idxs and len(table) > 1:
             for idx in risk_grade_col_idxs:
-                risk_score_ranges.append((get_column_letter(idx), header_row + 1, current_row - 1))
+                risk_score_ranges.append(
+                    (get_column_letter(idx + _COL_OFFSET), header_row + 1, current_row - 1)
+                )
 
         table_index += 1
         current_row += 1  # 표 사이 빈 행
@@ -184,10 +251,8 @@ def record_to_xlsx_bytes(record):
     if freeze_row is None:
         freeze_row = 2
 
-    while len(column_widths) < max_col_count:
-        column_widths.append(DEFAULT_COLUMN_WIDTH)
     for col_idx in range(1, max_col_count + 1):
-        ws.column_dimensions[get_column_letter(col_idx)].width = column_widths[col_idx - 1]
+        ws.column_dimensions[get_column_letter(col_idx + _COL_OFFSET)].width = column_widths[col_idx - 1]
 
     ws.freeze_panes = f"A{freeze_row}"
 

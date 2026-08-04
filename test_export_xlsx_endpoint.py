@@ -40,8 +40,8 @@ def run():
     wb = load_workbook(io.BytesIO(res.content))
     ws = wb.active
     results.append((
-        "응답 바이너리를 열어 표 내용 확인",
-        ws.cell(row=1, column=1).value == "항목" and ws.cell(row=2, column=1).value == "현장명",
+        "응답 바이너리를 열어 표 내용 확인(1행=문서 제목, 2행부터 B열에 표 시작)",
+        ws.cell(row=2, column=2).value == "항목" and ws.cell(row=3, column=2).value == "현장명",
     ))
 
     res_404 = client.get(f"/projects/{TEST_PROJECT}/records/존재하지않는id/export.xlsx")
