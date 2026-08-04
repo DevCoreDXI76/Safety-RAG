@@ -199,6 +199,22 @@ def run():
     checks.append(("박스 제목 '■ 중점(One Point) 위험요인'이 PDF 본문에 포함됨", "중점" in heading_text and "위험요인" in heading_text))
     checks.append(("레벨1 제목('위험성평가표 초안')은 본문에 중복 삽입되지 않음(문서 제목에서만 1번)", heading_text.count("초안") == 0))
 
+    # --- 표가 여러 페이지에 걸치면 헤더 행(열 제목)이 각 페이지에 반복됨 ---
+    many_rows_lines = ["| 번호 | 위험요인 | 감소대책 |", "|------|------|------|"]
+    for i in range(80):
+        many_rows_lines.append(f"| {i+1} | 위험요인 {i+1} | 감소대책 상세 설명 {i+1} |")
+    many_rows_record = {
+        "document_type": "위험성평가표",
+        "draft": "\n".join(many_rows_lines),
+    }
+    many_rows_pdf = record_to_pdf_bytes(many_rows_record)
+    many_rows_reader = pypdf.PdfReader(io.BytesIO(many_rows_pdf))
+    checks.append(("80행 표는 여러 페이지로 분할됨", len(many_rows_reader.pages) > 1))
+    pages_with_header = sum(
+        1 for page in many_rows_reader.pages if "위험요인" in page.extract_text() and "감소대책" in page.extract_text()
+    )
+    checks.append(("헤더 행(열 제목)이 모든 페이지에 반복됨", pages_with_header == len(many_rows_reader.pages)))
+
     print()
     all_ok = True
     for name, ok in checks:
