@@ -79,6 +79,30 @@ _LINE_BREAK_RE = re.compile(r"<br\s*/?>|\n")
 # 않는다(XLSX/HWPX 헤더색은 그대로 유지).
 _PDF_HEADER_FILL = "8DA1C5"
 
+# "참석자 명단(서명 필수)" 같은 서명란 표는 LLM이 만들어주는 빈 행 개수가
+# 들쭉날쭉해 실사용에 부족한 경우가 있었다(2026-08-04 요청 — 최소 10명 분량
+# 확보 + 손글씨로 쓸 수 있을 만큼 행 높이 확대). 프롬프트에 의존하지 않고
+# 렌더링 단계에서 결정적으로 보장한다.
+_SIGNATURE_TABLE_KEYWORDS = ("참석자", "서명")
+_SIGNATURE_TABLE_MIN_ROWS = 10
+_SIGNATURE_ROW_HEIGHT_PT = 26
+
+
+def _is_signature_heading(heading_text):
+    return heading_text is not None and any(k in heading_text for k in _SIGNATURE_TABLE_KEYWORDS)
+
+
+def _pad_table_rows(table, min_data_rows):
+    """헤더를 제외한 데이터 행 수가 min_data_rows보다 적으면 빈 행으로 채운다."""
+    ncols = max(len(row) for row in table)
+    data_row_count = len(table) - 1
+    if data_row_count >= min_data_rows:
+        return table
+    padded = [list(row) for row in table]
+    for _ in range(min_data_rows - data_row_count):
+        padded.append([""] * ncols)
+    return padded
+
 
 # 위험성평가표는 열이 많은 표(최대 13열)라 가로형을 유지해야 하지만,
 # 표준 작업계획서·TBM 일지는 대부분 서술형 문단 + 좁은 표라 세로형이 더
@@ -213,12 +237,17 @@ def _fit_cell_text(text, col_width, font_size):
     return text[: max_chars - 1].rstrip() + "…"
 
 
-def _build_table_element(table, frame_width, document_type):
+def _build_table_element(table, frame_width, document_type, is_signature_table=False):
     """
     Markdown에서 파싱한 표 1개(list[list[str]])를 프레임 폭에 맞춰 wrap되는
     Table 플로어블로 만든다. document_styles의 문서유형별 열비율·헤더/위험등급
     배경색·헤더별 정렬을 적용하고, AI 제안값이 하나라도 있었는지 함께 반환한다.
+    is_signature_table=True면 데이터 행을 최소 _SIGNATURE_TABLE_MIN_ROWS개까지
+    빈 행으로 채우고, 각 행 높이를 서명 가능한 정도로 키운다.
     """
+    if is_signature_table:
+        table = _pad_table_rows(table, _SIGNATURE_TABLE_MIN_ROWS)
+
     ncols = max(len(row) for row in table)
     style = get_style(document_type)
 
@@ -263,8 +292,13 @@ def _build_table_element(table, frame_width, document_type):
 
     # repeatRows=1: 표가 페이지 경계를 넘어가면 0번째 행(헤더)을 다음
     # 페이지에도 반복해서 그린다.
+    row_heights = None
+    if is_signature_table:
+        row_heights = [None] + [_SIGNATURE_ROW_HEIGHT_PT] * (len(table) - 1)
+
     table_flowable = Table(
-        data, colWidths=col_widths, style=TableStyle(table_style_commands), repeatRows=1
+        data, colWidths=col_widths, rowHeights=row_heights,
+        style=TableStyle(table_style_commands), repeatRows=1,
     )
     return table_flowable, ai_value_present
 
@@ -291,8 +325,10 @@ def record_to_pdf_bytes(record):
     if not blocks:
         elements.append(Paragraph(escape(record["draft"]).replace("\n", "<br/>"), _BODY_STYLE))
     else:
+        last_heading_text = None
         for block in blocks:
             if block["type"] == "heading":
+                last_heading_text = block["text"]
                 elements.append(Paragraph(escape(block["text"]), _BOX_TITLE_STYLE))
             elif block["type"] == "text":
                 body_text = escape(block["text"]).replace("\n", "<br/>")
@@ -300,7 +336,8 @@ def record_to_pdf_bytes(record):
                 elements.append(Spacer(1, 8))
             else:
                 table_flowable, ai_value_present = _build_table_element(
-                    block["rows"], doc.width, document_type
+                    block["rows"], doc.width, document_type,
+                    is_signature_table=_is_signature_heading(last_heading_text),
                 )
                 elements.append(table_flowable)
                 if ai_value_present:

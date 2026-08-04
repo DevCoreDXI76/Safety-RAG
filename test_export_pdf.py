@@ -23,7 +23,7 @@ from export_pdf import (
     _center_x, _hex_color, _PDF_HEADER_FILL, _TitleFlowable, record_to_pdf_bytes,
 )
 from document_styles import STYLE_SPECS
-from markdown_tables import parse_markdown_tables
+from markdown_tables import parse_markdown_blocks, parse_markdown_tables
 
 SAMPLE_RECORD = {
     "document_type": "위험성평가표",
@@ -245,6 +245,35 @@ def run():
     prose_reader = pypdf.PdfReader(io.BytesIO(prose_pdf))
     prose_text = "".join(page.extract_text() for page in prose_reader.pages)
     checks.append(("표가 아닌 서술형 섹션의 본문 내용이 PDF에 실제로 그려짐", "무전압 상태" in prose_text))
+
+    # --- 참석자 명단(서명 필수) 표는 최소 10행 확보 + 손글씨 서명 가능한 행 높이 ---
+    roster_record = {
+        "document_type": "TBM 일지",
+        "draft": (
+            "### 7. 참석자 명단 (서명 필수)\n\n"
+            "| 소속 | 직책 | 성명 | 서명 |\n|------|------|------|------|\n"
+            "|  |  |  |  |\n|  |  |  |  |\n"
+        ),
+    }
+    roster_blocks = parse_markdown_blocks(roster_record["draft"])
+    roster_table_rows = [b["rows"] for b in roster_blocks if b["type"] == "table"][0]
+    roster_flowable, _ = _build_table_element(
+        roster_table_rows, frame_width, roster_record["document_type"], is_signature_table=True
+    )
+    checks.append(("참석자 명단 표는 헤더 제외 최소 10행으로 패딩됨", len(roster_flowable._cellvalues) - 1 >= 10))
+    checks.append((
+        "참석자 명단 표의 데이터 행 높이가 서명 가능한 정도로 확대됨(>=24pt)",
+        all(h >= 24 for h in roster_flowable._argH[1:]),
+    ))
+    checks.append((
+        "일반 표(is_signature_table 기본값)는 패딩되지 않음",
+        len(mixed_flowable._cellvalues) - 1 == 1,
+    ))
+
+    # --- record_to_pdf_bytes 전체 파이프라인에서도 "참석자"/"서명" 헤딩 뒤
+    # 표가 자동으로 서명란 처리되는지(직전 헤딩 텍스트로 판정) ---
+    roster_pdf = record_to_pdf_bytes(roster_record)
+    checks.append(("참석자 명단 표 포함 PDF도 정상 생성됨", roster_pdf[:5] == b"%PDF-"))
 
     # --- 표가 여러 페이지에 걸치면 헤더 행(열 제목)이 각 페이지에 반복됨 ---
     many_rows_lines = ["| 번호 | 위험요인 | 감소대책 |", "|------|------|------|"]
