@@ -18,7 +18,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from document_styles import (
-    DEFAULT_COLUMN_WIDTH, base_header, get_style, parse_ai_score_cell,
+    AI_SCORE_FOOTNOTE, DEFAULT_COLUMN_WIDTH, base_header, get_style, parse_ai_score_cell,
     CENTER_ALIGN_HEADERS,
 )
 from markdown_tables import parse_markdown_blocks
@@ -32,6 +32,8 @@ _ALIGN_TITLE = Alignment(horizontal="left", vertical="center")
 _BODY_FONT_SIZE = 12
 _HEADER_FONT = Font(size=_BODY_FONT_SIZE, bold=True)
 _BODY_FONT = Font(size=_BODY_FONT_SIZE)
+_FOOTNOTE_FONT = Font(size=9, color="808080")
+_ALIGN_FOOTNOTE = Alignment(horizontal="left", vertical="center")
 
 _THIN_SIDE = Side(style="thin")
 _THIN_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_THIN_SIDE)
@@ -222,6 +224,8 @@ def record_to_xlsx_bytes(record):
                 if header_text in style.risk_grade_headers:
                     risk_grade_col_idxs.append(idx)
 
+        ai_value_present = False
+
         for row_offset, row_cells in enumerate(table):
             is_header = row_offset == 0
             row_texts_and_widths = []
@@ -231,6 +235,7 @@ def record_to_xlsx_bytes(record):
                 cell = ws.cell(row=current_row, column=col_idx + _COL_OFFSET, value=display_value)
                 if note:
                     cell.comment = Comment(note, _COMMENT_AUTHOR)
+                    ai_value_present = True
                 cell.border = _THIN_BORDER
 
                 if is_kv_table and col_idx >= 2:
@@ -279,6 +284,19 @@ def record_to_xlsx_bytes(record):
                 risk_score_ranges.append(
                     (get_column_letter(idx + _COL_OFFSET), header_row + 1, current_row - 1)
                 )
+
+        # AI 제안값이 있었던 표는 PDF/HWPX와 동일하게 각주를 표 바로 아래에 남긴다
+        # (2026-08-05 요청 — XLSX만 이 각주가 빠져 있었음).
+        if ai_value_present:
+            footnote_cell = ws.cell(row=current_row, column=1 + _COL_OFFSET, value=AI_SCORE_FOOTNOTE)
+            footnote_cell.font = _FOOTNOTE_FONT
+            footnote_cell.alignment = _ALIGN_FOOTNOTE
+            if max_col_count > 1:
+                ws.merge_cells(
+                    start_row=current_row, start_column=1 + _COL_OFFSET,
+                    end_row=current_row, end_column=max_col_count + _COL_OFFSET,
+                )
+            current_row += 1
 
         table_index += 1
         current_row += 1  # 표 사이 빈 행

@@ -4,7 +4,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from openpyxl import load_workbook
-from document_styles import STYLE_SPECS
+from document_styles import AI_SCORE_FOOTNOTE, STYLE_SPECS
 from export_xlsx import record_to_xlsx_bytes
 
 SAMPLE_RECORD = {
@@ -252,6 +252,13 @@ def run():
         "점수가 아닌 일반 텍스트 셀은 그대로 문자열 유지(B열)",
         ws3.cell(row=3, column=2).value == "지게차 충돌"
         and ws3.cell(row=3, column=2).comment is None,
+    ))
+    # --- AI 제안값이 있는 표는 PDF/HWPX와 동일하게 각주 문구가 표 아래에
+    # 추가됨(2026-08-05 요청 — 지금까지 XLSX만 이 각주가 빠져 있었음) ---
+    score_all_values = [ws3.cell(row=r, column=2).value for r in range(1, ws3.max_row + 1)]
+    results.append((
+        "AI 제안값 각주(AI_SCORE_FOOTNOTE)가 표 아래에 렌더링됨",
+        AI_SCORE_FOOTNOTE in score_all_values,
     ))
 
     # --- 위험성평가표 전용: 열 폭을 셀 내용 글자수 기반으로 자동조절 ---
