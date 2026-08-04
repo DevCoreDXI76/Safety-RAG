@@ -266,6 +266,15 @@ def record_to_xlsx_bytes(record):
                     cell.alignment = (
                         _ALIGN_CENTER if header_text.lower() in CENTER_ALIGN_HEADERS else _ALIGN_LEFT_TOP
                     )
+                    if col_idx not in risk_grade_col_idxs:
+                        # "위험성 추정 행렬" 참고표처럼 헤더명이 "위험등급"이 아니라
+                        # risk_grade_column_indices로는 안 잡히지만, 셀 값 자체가
+                        # 등급 문자(A/B/C)인 표도 본문과 같은 색으로 칠한다
+                        # (2026-08-05 요청).
+                        grade = str(display_value).strip().upper() if display_value is not None else ""
+                        if grade in risk_fills:
+                            cell.fill = risk_fills[grade]
+                            cell.alignment = _ALIGN_CENTER
 
             if is_kv_table and max_col_count > 2:
                 ws.merge_cells(

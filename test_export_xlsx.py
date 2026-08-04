@@ -109,6 +109,22 @@ SAMPLE_RECORD_LONG_TEXT = {
     "created_at": "2026-08-05 10:00:00",
 }
 
+# 2026-08-05 요청: "위험성 추정 행렬" 참고표는 열 헤더가 "위험등급"이 아니라
+# risk_grade_column_indices로 안 잡혀서 A/B/C 셀에 색이 안 들어가고 있었다.
+SAMPLE_RECORD_RISK_MATRIX = {
+    "id": "matrix1",
+    "document_type": "위험성평가표",
+    "project_info": "위험성 추정 행렬 색상 검증용",
+    "draft": (
+        "| 빈도\\강도 | 1(낮음) | 2(보통) | 3(높음) |\n"
+        "|------|------|------|------|\n"
+        "| 1(낮음) | C | C | B |\n"
+        "| 2(보통) | C | B | A |\n"
+        "| 3(높음) | B | A | A |\n"
+    ),
+    "created_at": "2026-08-05 10:00:00",
+}
+
 SAMPLE_RECORD_OTHER_DOC_TYPE = {
     "id": "widthtest2",
     "document_type": "TBM 일지",
@@ -259,6 +275,26 @@ def run():
     results.append((
         "AI 제안값 각주(AI_SCORE_FOOTNOTE)가 표 아래에 렌더링됨",
         AI_SCORE_FOOTNOTE in score_all_values,
+    ))
+
+    # --- "위험성 추정 행렬" 참고표는 헤더명이 "위험등급"이 아니라
+    # risk_grade_column_indices로는 안 잡히지만, 셀 값 자체가 등급 문자면
+    # 본문 위험성평가표와 같은 색으로 칠해져야 한다(2026-08-05 요청) ---
+    xlsx_bytes_matrix = record_to_xlsx_bytes(SAMPLE_RECORD_RISK_MATRIX)
+    wb_matrix = load_workbook(io.BytesIO(xlsx_bytes_matrix))
+    ws_matrix = wb_matrix.active
+    risk_style = STYLE_SPECS["위험성평가표"]
+    results.append((
+        "위험성 추정 행렬의 'A' 셀(4행 E열)에 A등급 색이 직접 채워짐",
+        ws_matrix.cell(row=4, column=5).fill.fgColor.rgb.upper().endswith(risk_style.risk_grade_colors["A"]),
+    ))
+    results.append((
+        "위험성 추정 행렬의 'B' 셀(4행 D열)에 B등급 색이 직접 채워짐",
+        ws_matrix.cell(row=4, column=4).fill.fgColor.rgb.upper().endswith(risk_style.risk_grade_colors["B"]),
+    ))
+    results.append((
+        "행 라벨 열(B열, '1(낮음)' 등)은 A/B/C가 아니라 색칠되지 않음",
+        ws_matrix.cell(row=3, column=2).fill.fgColor.rgb in (None, "00000000"),
     ))
 
     # --- 위험성평가표 전용: 열 폭을 셀 내용 글자수 기반으로 자동조절 ---
