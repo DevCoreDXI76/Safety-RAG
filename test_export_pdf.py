@@ -33,6 +33,23 @@ SAMPLE_RECORD = {
     ),
 }
 
+# 2026-08-04 베타1 실기기 테스트 중 실제로 발생한 LayoutError 재현 사례:
+# "표준 작업계획서" 스타일 스펙(column_widths=[16,26,30,34], 4열 기준)에 없는
+# 12열 표(작업유형별 법정 별표 형태)가 생성되면, 정의 안 된 8개 열은
+# DEFAULT_COLUMN_WIDTH로 채워지고 1열(비중 16/282)이 극도로 좁아진다.
+# 그 좁은 1열에 100자를 넘는 문장이 들어가면 셀 하나가 페이지 하나보다도
+# 커져 reportlab이 LayoutError로 PDF 생성 자체를 실패시켰다(빈 파일이 아니라
+# 예외 발생 → 다운로드 500 에러).
+SAMPLE_RECORD_NARROW_COLUMN_LONG_TEXT = {
+    "document_type": "표준 작업계획서",
+    "draft": (
+        "| 단위작업 | " + " | ".join(f"열{i}" for i in range(2, 13)) + " |\n"
+        "|" + "---|" * 12 + "\n"
+        "| " + ("사전조사 및 준비 작업 현장여건 확인 관계기관 협의 " * 8).strip()
+        + " | " + " | ".join(["x"] * 11) + " |\n"
+    ),
+}
+
 SAMPLE_RECORD_WITH_SCORE = {
     "document_type": "위험성평가표",
     "draft": (
@@ -98,6 +115,15 @@ def run():
         "AI 제안값" not in full_text_score.split("※")[0],
     ))
     checks.append(("AI 제안값 각주가 표 아래에 1회 표기됨", full_text_score.count("AI 제안값") == 1))
+
+    # --- 좁은 열에 지나치게 긴 셀 텍스트가 들어와도 LayoutError 없이 생성됨 ---
+    try:
+        narrow_pdf = record_to_pdf_bytes(SAMPLE_RECORD_NARROW_COLUMN_LONG_TEXT)
+        narrow_ok = narrow_pdf[:5] == b"%PDF-"
+    except Exception as e:
+        narrow_ok = False
+        print(f"  (좁은 열 긴 텍스트 케이스에서 예외 발생: {type(e).__name__})")
+    checks.append(("좁은 열(12열 표 1열)에 긴 텍스트가 와도 PDF 생성이 실패하지 않음", narrow_ok))
 
     print()
     all_ok = True

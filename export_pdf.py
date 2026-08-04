@@ -47,9 +47,30 @@ _BASE_TABLE_STYLE_COMMANDS = [
     ("VALIGN", (0, 0), (-1, -1), "TOP"),
 ]
 
+# 셀 하나가 페이지 하나보다 커지는 걸 막는 안전 상한(줄 수). document_styles의
+# 열비율은 특정 열 개수를 염두에 두고 정한 값이라, 그 열 개수를 벗어나는 표
+# (예: 4열 기준 스펙에 12열 표가 들어오면 8개 열이 DEFAULT_COLUMN_WIDTH로
+# 채워지며 1열이 극도로 좁아짐)에서 셀 텍스트가 조금만 길어도 reportlab이
+# LayoutError로 PDF 생성 자체를 실패시킨다(2026-08-04 베타1 실기기 테스트에서
+# 실제 발생·재현·확인, test_export_pdf.py 참고).
+_MAX_CELL_LINES = 24
+
 
 def _hex_color(hex_str):
     return colors.HexColor("#" + hex_str)
+
+
+def _fit_cell_text(text, col_width, font_size):
+    """
+    셀 폭 대비 텍스트가 _MAX_CELL_LINES줄을 넘어갈 만큼 길면 잘라낸다.
+    CID 폰트(한글 완전폭)에서 글자당 폭 ≈ font_size이므로 이를 그대로
+    글자당 폭 근사치로 쓴다.
+    """
+    chars_per_line = max(1, int(col_width / font_size))
+    max_chars = chars_per_line * _MAX_CELL_LINES
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
 
 
 def _build_table_element(table, frame_width, document_type):
@@ -87,7 +108,8 @@ def _build_table_element(table, frame_width, document_type):
                 style, headers_base, risk_cols, is_kv_table, is_header_row, col_index, text
             )
             cell_style = _CELL_STYLE_CENTER if center else _CELL_STYLE_LEFT
-            row_cells.append(Paragraph(escape(text), cell_style))
+            safe_text = _fit_cell_text(text, col_widths[col_index], cell_style.fontSize)
+            row_cells.append(Paragraph(escape(safe_text), cell_style))
 
             if fill_hex:
                 table_style_commands.append(
