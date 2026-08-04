@@ -10,6 +10,7 @@ import re
 _TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 _SEPARATOR_CELL_RE = re.compile(r"^\s*:?-{3,}:?\s*$")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_HEADING_RE = re.compile(r"^#{2,6}\s+(.+?)\s*$")
 
 
 def _split_row(line):
@@ -54,3 +55,40 @@ def parse_markdown_tables(markdown_text):
         tables.append(current_rows)
 
     return tables
+
+
+def parse_markdown_blocks(markdown_text):
+    """
+    markdown_text를 헤딩(레벨 2~6)과 표를 순서대로 보존한 블록 리스트로
+    반환한다. parse_markdown_tables와 달리 헤딩 텍스트를 버리지 않는다 —
+    PDF가 표 앞에 "박스 제목"을 그리기 위해 필요하다(export_pdf.py 전용,
+    XLSX/HWPX는 계속 parse_markdown_tables를 쓴다).
+    레벨 1(# ...)은 문서 전체 제목과 중복이라 제외한다.
+    각 블록은 {"type": "heading", "text": str} 또는
+    {"type": "table", "rows": list[list[str]]}.
+    """
+    blocks = []
+    current_rows = []
+
+    def flush_table():
+        if current_rows:
+            blocks.append({"type": "table", "rows": current_rows[:]})
+            current_rows.clear()
+
+    for line in markdown_text.splitlines():
+        table_match = _TABLE_ROW_RE.match(line)
+        if table_match:
+            cells = _split_row(line)
+            if _is_separator_row(cells):
+                continue
+            current_rows.append([_clean_cell(c) for c in cells])
+            continue
+
+        flush_table()
+
+        heading_match = _HEADING_RE.match(line)
+        if heading_match:
+            blocks.append({"type": "heading", "text": heading_match.group(1).strip()})
+
+    flush_table()
+    return blocks
