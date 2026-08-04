@@ -30,7 +30,7 @@ from document_styles import (
     AI_SCORE_FOOTNOTE, base_header, cell_style_decision, get_style,
     parse_ai_score_cell, risk_grade_column_indices,
 )
-from markdown_tables import parse_markdown_tables
+from markdown_tables import parse_markdown_blocks
 
 _FONT_NAME = "HYSMyeongJo-Medium"
 pdfmetrics.registerFont(UnicodeCIDFont(_FONT_NAME))
@@ -39,6 +39,10 @@ _BODY_STYLE = ParagraphStyle("body", fontName=_FONT_NAME, fontSize=10.5, leading
 _CELL_STYLE_LEFT = ParagraphStyle("cell_left", fontName=_FONT_NAME, fontSize=9, leading=11, alignment=TA_LEFT)
 _CELL_STYLE_CENTER = ParagraphStyle("cell_center", fontName=_FONT_NAME, fontSize=9, leading=11, alignment=TA_CENTER)
 _FOOTNOTE_STYLE = ParagraphStyle("footnote", fontName=_FONT_NAME, fontSize=8, leading=10, textColor=colors.grey)
+_BOX_TITLE_STYLE = ParagraphStyle(
+    "box_title", fontName=_FONT_NAME, fontSize=18, leading=22,
+    alignment=TA_LEFT, spaceBefore=14, spaceAfter=6, keepWithNext=True,
+)
 
 _CELL_SIDE_PADDING_PT = 3  # LEFTPADDING/RIGHTPADDING 각각 — _CELL_H_PADDING_PT와 반드시 짝이 맞아야 함
 
@@ -225,11 +229,12 @@ def _build_table_element(table, frame_width, document_type):
 
 def record_to_pdf_bytes(record):
     """
-    record["draft"]에서 Markdown 표를 순서대로 파싱해 표로 채운다.
-    표가 없으면 draft 원문을 문단 하나로 그대로 넣는다(XLSX/HWPX와 동일 규칙).
-    표 셀은 Paragraph로 감싸 렌더링하므로 원문을 그대로 넣기 전에 escape()한다.
+    record["draft"]에서 헤딩(박스 제목)과 Markdown 표를 순서대로 파싱해
+    문서를 만든다. 표가 하나도 없으면 draft 원문을 문단 하나로 그대로
+    넣는다(XLSX/HWPX와 동일 규칙). 표 셀은 Paragraph로 감싸 렌더링하므로
+    원문을 그대로 넣기 전에 escape()한다.
     """
-    tables = parse_markdown_tables(record["draft"])
+    blocks = parse_markdown_blocks(record["draft"])
     document_type = record["document_type"]
 
     buffer = io.BytesIO()
@@ -241,12 +246,19 @@ def record_to_pdf_bytes(record):
     )
     elements = [_TitleFlowable(document_type), Spacer(1, 12)]
 
-    if not tables:
+    table_blocks = [b for b in blocks if b["type"] == "table"]
+    if not table_blocks:
         body_text = escape(record["draft"]).replace("\n", "<br/>")
         elements.append(Paragraph(body_text, _BODY_STYLE))
     else:
-        for table in tables:
-            table_flowable, ai_value_present = _build_table_element(table, doc.width, document_type)
+        for block in blocks:
+            if block["type"] == "heading":
+                elements.append(Paragraph(escape(block["text"]), _BOX_TITLE_STYLE))
+                continue
+
+            table_flowable, ai_value_present = _build_table_element(
+                block["rows"], doc.width, document_type
+            )
             elements.append(table_flowable)
             if ai_value_present:
                 elements.append(Spacer(1, 4))

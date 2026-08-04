@@ -60,6 +60,21 @@ SAMPLE_RECORD_WITH_SCORE = {
     ),
 }
 
+SAMPLE_RECORD_WITH_HEADING = {
+    "document_type": "위험성평가표",
+    "draft": (
+        "# 위험성평가표 초안\n\n"
+        "## ■ 기본 정보\n\n"
+        "| 항목 | 내용 |\n"
+        "|------|------|\n"
+        "| 현장명 | 강남지사 |\n\n"
+        "## ■ 중점(One Point) 위험요인\n\n"
+        "| 위험요인 | 대책 |\n"
+        "|------|------|\n"
+        "| 붕괴 | 흙막이 설치 |\n"
+    ),
+}
+
 SAMPLE_RECORD_MIXED_WIDTH = {
     "document_type": "TBM 일지",
     "draft": (
@@ -175,6 +190,14 @@ def run():
         "열 너비 합이 frame_width와 같다(빈 공간 없이 꽉 참)",
         abs(sum(mixed_widths) - frame_width) < 1,
     ))
+
+    # --- 박스 제목(헤딩)이 PDF에 실제로 그려짐 ---
+    heading_pdf = record_to_pdf_bytes(SAMPLE_RECORD_WITH_HEADING)
+    heading_reader = pypdf.PdfReader(io.BytesIO(heading_pdf))
+    heading_text = "".join(page.extract_text() for page in heading_reader.pages)
+    checks.append(("박스 제목 '■ 기본 정보'가 PDF 본문에 포함됨", "기본 정보" in heading_text))
+    checks.append(("박스 제목 '■ 중점(One Point) 위험요인'이 PDF 본문에 포함됨", "중점" in heading_text and "위험요인" in heading_text))
+    checks.append(("레벨1 제목('위험성평가표 초안')은 본문에 중복 삽입되지 않음(문서 제목에서만 1번)", heading_text.count("초안") == 0))
 
     print()
     all_ok = True
