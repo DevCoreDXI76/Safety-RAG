@@ -18,6 +18,7 @@ if hasattr(sys.stdout, "reconfigure"):
 import pypdf
 from reportlab.lib.pagesizes import A4, landscape, portrait
 
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.platypus import Indenter, Table
 from export_pdf import (
     _BODY_STYLE, _BOX_TITLE_STYLE, _build_elements, _build_table_element, _CELL_STYLE_CENTER,
@@ -310,6 +311,18 @@ def run():
     checks.append((
         "위험성 추정 행렬의 행 라벨 열(0)은 A/B/C가 아니라 색칠되지 않음",
         not any(cmd[1][0] == 0 and cmd[1][1] > 0 for cmd in matrix_bg_commands),
+    ))
+
+    # --- "항목/내용" 형태 kv표의 헤더 행에서 "내용" 칸은 가운데정렬(2026-08-05 요청) ---
+    kv_header_tables = parse_markdown_tables("| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남지사 |\n")
+    kv_header_flowable, _ = _build_table_element(kv_header_tables[0], frame_width, "TBM 일지")
+    checks.append((
+        "kv표 헤더의 '내용' 칸은 가운데정렬",
+        kv_header_flowable._cellvalues[0][1].style.alignment == TA_CENTER,
+    ))
+    checks.append((
+        "kv표 데이터 행의 값 칸(내용 열)은 계속 왼쪽정렬",
+        kv_header_flowable._cellvalues[1][1].style.alignment == TA_LEFT,
     ))
 
     # --- 표는 명시적으로 좌측정렬(hAlign)됨, 박스 제목 아래 내용은 들여쓰기됨 ---

@@ -334,6 +334,10 @@ def _build_table_element(
             center, fill_hex = cell_style_decision(
                 style, headers_base, risk_cols, is_kv_table, is_header_row, col_index, text
             )
+            if is_kv_table and is_header_row and col_index == 1:
+                # kv표("항목/내용") 헤더 행의 "내용" 칸은 XLSX/HWPX와 달리
+                # PDF에서만 가운데정렬한다(2026-08-05 요청).
+                center = True
             # 다중열 표(위험성평가표 등)의 헤더 행 색(style.header_fill)은
             # document_styles의 공유 스펙(XLSX/HWPX와 동일)이라 진한 남색이다.
             # XLSX/HWPX는 건드리지 않고 PDF에서만 더 연한 톤으로 바꿔 쓴다
