@@ -80,7 +80,7 @@ _LINE_BREAK_RE = re.compile(r"<br\s*/?>|\n")
 _PDF_HEADER_FILL = "8DA1C5"
 
 # 기본(reportlab 기본값 72pt=1인치)이 너무 넓다는 피드백으로 4방 모두 축소.
-_PAGE_MARGIN_PT = 15
+_PAGE_MARGIN_PT = 20
 
 # 박스 제목(헤딩) 바로 아래 표·본문을 이 폭만큼 들여써서, 제목에 속한
 # 내용이라는 게 시각적으로 드러나게 한다("모두 가운데정렬처럼 보인다" —
@@ -94,7 +94,7 @@ _CONTENT_INDENT_PT = 14
 # 렌더링 단계에서 결정적으로 보장한다.
 _SIGNATURE_TABLE_KEYWORDS = ("참석자", "서명")
 _SIGNATURE_TABLE_MIN_ROWS = 10
-_SIGNATURE_ROW_HEIGHT_PT = 26
+_SIGNATURE_ROW_HEIGHT_PT = 30
 
 # "(빈칸 - 현장 기재)"류 플레이스홀더는 실제 내용이 아니라 안내문이므로
 # 연한 회색으로 구분해 표시한다(2026-08-04 요청). escape() 이후의 텍스트에

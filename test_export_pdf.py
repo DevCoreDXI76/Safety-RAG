@@ -98,7 +98,7 @@ def run():
     checks = []
 
     # --- 문서 제목: 가운데정렬 + 밑줄 + 28pt + 굵게(faux-bold 2회 겹쳐 그리기) ---
-    checks.append(("여백은 상하좌우 15pt로 통일", _PAGE_MARGIN_PT == 15))
+    checks.append(("여백은 상하좌우 20pt로 통일", _PAGE_MARGIN_PT == 20))
     checks.append(("제목 폰트 크기 28pt", _TitleFlowable("위험성평가표").font_size == 28))
     checks.append(("박스 제목(서브 제목) 폰트 크기 16pt", _BOX_TITLE_STYLE.fontSize == 16))
     checks.append(("표 셀(왼쪽정렬) 폰트 크기 12pt", _CELL_STYLE_LEFT.fontSize == 12))
@@ -308,8 +308,8 @@ def run():
     checks.append(("참석자 명단 표는 헤더 제외 최소 10행으로 패딩됨", len(roster_flowable._cellvalues) - 1 >= 10))
     checks.append(("_build_table_element이 만든 표는 hAlign='LEFT'", roster_flowable.hAlign == "LEFT"))
     checks.append((
-        "참석자 명단 표의 데이터 행 높이가 서명 가능한 정도로 확대됨(>=24pt)",
-        all(h >= 24 for h in roster_flowable._argH[1:]),
+        "참석자 명단 표의 데이터 행 높이가 30pt로 확대됨",
+        all(h == 30 for h in roster_flowable._argH[1:]),
     ))
     # 실사용 조건(세로형 A4 + 여백 15pt + 박스 들여쓰기 14pt)의 좁은 폭에서도
     # 서명란 열 폭이 한글 10자 이상 확보되는지 — 넉넉한 landscape 폭으로
