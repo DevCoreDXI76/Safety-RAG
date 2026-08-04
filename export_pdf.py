@@ -35,9 +35,9 @@ from markdown_tables import parse_markdown_blocks
 _FONT_NAME = "HYSMyeongJo-Medium"
 pdfmetrics.registerFont(UnicodeCIDFont(_FONT_NAME))
 
-_BODY_STYLE = ParagraphStyle("body", fontName=_FONT_NAME, fontSize=10.5, leading=15)
-_CELL_STYLE_LEFT = ParagraphStyle("cell_left", fontName=_FONT_NAME, fontSize=9, leading=11, alignment=TA_LEFT)
-_CELL_STYLE_CENTER = ParagraphStyle("cell_center", fontName=_FONT_NAME, fontSize=9, leading=11, alignment=TA_CENTER)
+_BODY_STYLE = ParagraphStyle("body", fontName=_FONT_NAME, fontSize=14, leading=18)
+_CELL_STYLE_LEFT = ParagraphStyle("cell_left", fontName=_FONT_NAME, fontSize=14, leading=18, alignment=TA_LEFT)
+_CELL_STYLE_CENTER = ParagraphStyle("cell_center", fontName=_FONT_NAME, fontSize=14, leading=18, alignment=TA_CENTER)
 _FOOTNOTE_STYLE = ParagraphStyle("footnote", fontName=_FONT_NAME, fontSize=8, leading=10, textColor=colors.grey)
 _BOX_TITLE_STYLE = ParagraphStyle(
     "box_title", fontName=_FONT_NAME, fontSize=18, leading=22,
@@ -49,7 +49,7 @@ _CELL_SIDE_PADDING_PT = 3  # LEFTPADDING/RIGHTPADDING 각각 — _CELL_H_PADDING
 _BASE_TABLE_STYLE_COMMANDS = [
     ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
     ("FONTNAME", (0, 0), (-1, -1), _FONT_NAME),
-    ("FONTSIZE", (0, 0), (-1, -1), 9),
+    ("FONTSIZE", (0, 0), (-1, -1), 14),
     ("VALIGN", (0, 0), (-1, -1), "TOP"),
     # reportlab Table의 기본 LEFTPADDING/RIGHTPADDING(각 6pt)을 그대로 두면
     # _content_aware_col_widths가 계산한 "글자가 들어갈 폭"보다 실제 사용
@@ -141,13 +141,15 @@ def _measure_max_line_width(text, font_size):
 def _content_aware_col_widths(raw_rows, ncols, frame_width, font_size):
     """
     각 열의 '자연 폭'(그 열에서 가장 긴 한 줄의 렌더 폭 + 좌우 여백)을 측정해
-    열 너비를 정한다. 모든 열에 최소폭(_MIN_COL_WIDTH_PT)을 먼저 보장하고,
-    남는 공간을 각 열이 최소폭을 넘어 실제로 더 필요로 하는 만큼에 비례해서만
-    나눠준다 — "예/아니오"처럼 짧은 열은 최소폭에 머물고, 서술형 열이 남는
-    공간을 가져간다. 특정 한 열의 자연폭이 아무리 커도 가져갈 수 있는 몫은
-    '남는 공간' 전체를 넘지 못하므로, 다른 열의 최소폭을 침해할 수 없다
-    (표준 작업계획서 12열 표에서 셀 하나 때문에 다른 열이 다 눌리던 문제의
-    구조적 재발 방지). 합계는 항상 frame_width와 같다.
+    열 너비를 정한다. water-filling 방식: 자연폭이 작은 열부터 정렬해,
+    "남은 예산을 남은 열 수로 균등 배분했을 때" 그 안에 들어오는 열은 자기
+    자연폭을 그대로 받는다(예: "작업단계" 4글자 헤더는 옆에 아주 긴 서술형
+    열이 있어도 절대 안 눌린다 — 2026-08-04, 폰트를 14pt로 키운 뒤 짧은 열이
+    눌려 줄바꿈되는 회귀가 재현돼 알고리즘을 다시 설계함). 어느 열이든 균등
+    배분보다 더 필요로 하는 순간부터는, 남은 열들이 "남은 예산"을 자연폭
+    초과분에 비례해서만 나눠 갖는다(최소폭 바닥 보장 포함 — 12열 표에서 셀
+    하나가 다른 열을 다 눌러버리던 문제의 재발 방지). 합계는 항상
+    frame_width와 같다.
     """
     natural = []
     for col in range(ncols):
@@ -157,16 +159,35 @@ def _content_aware_col_widths(raw_rows, ncols, frame_width, font_size):
             widest = max(widest, _measure_max_line_width(text, font_size))
         natural.append(widest + _CELL_H_PADDING_PT)
 
-    floor = min(_MIN_COL_WIDTH_PT, frame_width / ncols)
-    reserved = floor * ncols
-    surplus = max(frame_width - reserved, 0)
-    extra_need = [max(w - floor, 0) for w in natural]
-    total_extra_need = sum(extra_need)
+    result = [0.0] * ncols
+    order = sorted(range(ncols), key=lambda i: natural[i])
+    remaining_budget = frame_width
+    remaining_count = ncols
+    settled = set()
 
-    if total_extra_need == 0:
-        return [floor + surplus / ncols] * ncols
+    for i in order:
+        fair_share = remaining_budget / remaining_count
+        if natural[i] > fair_share:
+            break
+        result[i] = natural[i]
+        remaining_budget -= natural[i]
+        remaining_count -= 1
+        settled.add(i)
 
-    return [floor + surplus * (need / total_extra_need) for need in extra_need]
+    unsettled = [i for i in range(ncols) if i not in settled]
+    if unsettled:
+        floor = min(_MIN_COL_WIDTH_PT, remaining_budget / len(unsettled))
+        reserved = floor * len(unsettled)
+        surplus = max(remaining_budget - reserved, 0)
+        extra_need = {i: max(natural[i] - floor, 0) for i in unsettled}
+        total_extra_need = sum(extra_need.values())
+        for i in unsettled:
+            if total_extra_need == 0:
+                result[i] = floor + surplus / len(unsettled)
+            else:
+                result[i] = floor + surplus * (extra_need[i] / total_extra_need)
+
+    return result
 
 
 def _fit_cell_text(text, col_width, font_size):
