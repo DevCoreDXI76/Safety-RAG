@@ -20,9 +20,11 @@ from document_styles import (
     DEFAULT_COLUMN_WIDTH, base_header, get_style, parse_ai_score_cell,
     CENTER_ALIGN_HEADERS,
 )
-from markdown_tables import parse_markdown_tables
+from markdown_tables import parse_markdown_blocks
 
 _HEADER_FONT = Font(bold=True)
+_BOX_TITLE_FONT = Font(size=18, bold=True, color="000000")
+_ALIGN_TITLE = Alignment(horizontal="left", vertical="center")
 
 _THIN_SIDE = Side(style="thin")
 _THIN_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_THIN_SIDE)
@@ -63,10 +65,11 @@ def _apply_print_settings(ws, title_row=None):
 
 def record_to_xlsx_bytes(record):
     """
-    record["draft"]에서 Markdown 표를 파싱해 시트에 순서대로 채운다.
-    표가 여러 개면 표 사이에 빈 행 하나를 둔다. 표가 없으면 draft 원문을 A1에 넣는다.
+    record["draft"]에서 헤딩(박스 제목)·표·서술형 문단을 순서대로 시트에
+    채운다. 표가 여러 개면 표 사이에 빈 행 하나를 둔다. draft가 완전히
+    비어있는 경우(이론상 거의 없음)만 원문 그대로 A1에 넣는다.
     """
-    tables = parse_markdown_tables(record["draft"])
+    blocks = parse_markdown_blocks(record["draft"])
     style = get_style(record["document_type"])
 
     header_fill = _fill(style.header_fill)
@@ -78,20 +81,48 @@ def record_to_xlsx_bytes(record):
     ws = wb.active
     ws.title = _sheet_title(record["document_type"])
 
-    if not tables:
+    if not blocks:
         ws.cell(row=1, column=1, value=record["draft"])
         _apply_print_settings(ws)
         buffer = io.BytesIO()
         wb.save(buffer)
         return buffer.getvalue()
 
+    # 박스 가로 크기를 모든 표가 동일하게 쓰도록, 시트 전체에서 가장 열이 많은
+    # 표 기준으로 폭을 맞춘다(2026-08-05 요청) — kv표(항목/내용, 2열)의 "내용"
+    # 칸은 이 값까지 병합해서 다른 표와 박스 너비가 맞아 보이게 한다.
+    table_blocks = [b for b in blocks if b["type"] == "table"]
+    max_col_count = max((len(row) for tb in table_blocks for row in tb["rows"]), default=1)
+
     column_widths = list(style.column_widths)
     current_row = 1
-    max_col_count = 1
+    table_index = 0
     freeze_row = None
     risk_score_ranges = []  # (col_letter, first_data_row, last_data_row)
 
-    for table_index, table in enumerate(tables):
+    for block in blocks:
+        if block["type"] == "heading":
+            title_cell = ws.cell(row=current_row, column=1, value=block["text"])
+            title_cell.font = _BOX_TITLE_FONT
+            title_cell.alignment = _ALIGN_TITLE
+            if max_col_count > 1:
+                ws.merge_cells(
+                    start_row=current_row, start_column=1, end_row=current_row, end_column=max_col_count
+                )
+            current_row += 1
+            continue
+
+        if block["type"] == "text":
+            text_cell = ws.cell(row=current_row, column=1, value=block["text"])
+            text_cell.alignment = _ALIGN_LEFT_TOP
+            if max_col_count > 1:
+                ws.merge_cells(
+                    start_row=current_row, start_column=1, end_row=current_row, end_column=max_col_count
+                )
+            current_row += 2  # 다음 블록과 구분되도록 빈 행 하나
+            continue
+
+        table = block["rows"]
         header_row = current_row
         headers_base = [base_header(h) for h in table[0]]
         is_kv_table = len(table[0]) == 2
@@ -133,7 +164,11 @@ def record_to_xlsx_bytes(record):
                         _ALIGN_CENTER if header_text.lower() in CENTER_ALIGN_HEADERS else _ALIGN_LEFT_TOP
                     )
 
-            max_col_count = max(max_col_count, len(row_cells))
+            if is_kv_table and max_col_count > 2:
+                ws.merge_cells(
+                    start_row=current_row, start_column=2, end_row=current_row, end_column=max_col_count
+                )
+
             current_row += 1
 
             if table_index == 1 and is_header:
@@ -143,6 +178,7 @@ def record_to_xlsx_bytes(record):
             for idx in risk_grade_col_idxs:
                 risk_score_ranges.append((get_column_letter(idx), header_row + 1, current_row - 1))
 
+        table_index += 1
         current_row += 1  # 표 사이 빈 행
 
     if freeze_row is None:
