@@ -86,6 +86,29 @@ SAMPLE_RECORD_RISK_WIDE_NARROW = {
     "created_at": "2026-08-05 10:00:00",
 }
 
+# 2026-08-05 요청: 엑셀은 병합된 셀에서 줄바꿈(wrap_text)이 있어도 행 높이를
+# 자동으로 늘려주지 않는다 — 그래서 종합의견 등 긴 문단이 한 줄로 눌려 보이고,
+# 심하면 "내용이 통째로 빠졌다"고 오해하게 만든다. 행 높이를 직접 계산해서
+# 지정해야 한다.
+SAMPLE_RECORD_LONG_TEXT = {
+    "id": "longtext1",
+    "document_type": "위험성평가표",
+    "project_info": "행 높이 자동조절 검증용",
+    "draft": (
+        "## ■ 종합의견\n\n"
+        "본 작업은 감전 및 아크 관련 위험요인이 가장 중대하다. 전원 차단·무전압 확인·잠금장치 적용 등 "
+        "전기작업 안전절차를 최우선으로 준수해야 하며, 작업 전 전기안전작업계획서 및 회로도 확인을 "
+        "반드시 병행할 것을 권고한다. 중량물 하역 및 개구부 주변 작업 시에도 협착·추락 방지대책을 "
+        "함께 이행해야 한다.\n\n"
+        "## ■ 기본 정보\n\n"
+        "| 항목 | 내용 |\n"
+        "|------|------|\n"
+        "| 짧은값 | 예 |\n"
+        "| 긴값 | 매설물 관리기관 확인 및 이설·보호대책 수립, 굴착 착수 전 관계 기관 협의 후 착공계 제출 |\n"
+    ),
+    "created_at": "2026-08-05 10:00:00",
+}
+
 SAMPLE_RECORD_OTHER_DOC_TYPE = {
     "id": "widthtest2",
     "document_type": "TBM 일지",
@@ -254,6 +277,26 @@ def run():
         "TBM 일지 등은 여전히 document_styles의 정적 열폭 스펙을 그대로 씀",
         ws5.column_dimensions["B"].width == tbm_spec_widths[0]
         and ws5.column_dimensions["C"].width == tbm_spec_widths[1],
+    ))
+
+    # --- 병합된 셀도 줄바꿈 내용에 맞춰 행 높이가 자동으로 늘어남
+    # (2026-08-05 요청 — 안 그러면 긴 문단이 한 줄로 눌려 보이거나 "내용이
+    # 빠졌다"고 오해하게 됨) ---
+    xlsx_bytes_long = record_to_xlsx_bytes(SAMPLE_RECORD_LONG_TEXT)
+    wb6 = load_workbook(io.BytesIO(xlsx_bytes_long))
+    ws6 = wb6.active
+    # 1행=제목, 2행=박스제목("종합의견"), 3행=긴 서술형 본문
+    long_text_row_height = ws6.row_dimensions[3].height
+    results.append(("긴 서술형 문단이 있는 행은 기본 높이(15pt)보다 훨씬 큼", (
+        long_text_row_height is not None and long_text_row_height > 40
+    )))
+    # 6행=kv표 헤더, 7행="짧은값|예"(둘 다 짧음), 8행="긴값|매설물 관리기관..."(내용 열이 김)
+    short_row_height = ws6.row_dimensions[7].height
+    long_kv_row_height = ws6.row_dimensions[8].height
+    results.append((
+        "kv표에서도 내용이 긴 행이 짧은 행보다 높이가 훨씬 큼",
+        long_kv_row_height is not None and short_row_height is not None
+        and long_kv_row_height > short_row_height * 1.5,
     ))
 
     all_ok = True

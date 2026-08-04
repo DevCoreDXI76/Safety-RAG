@@ -77,6 +77,33 @@ def _content_aware_excel_widths(table_blocks, ncols):
     return [min(w + _EXCEL_COL_WIDTH_PADDING, _MAX_EXCEL_COL_WIDTH) for w in widths]
 
 
+# 엑셀은 "병합된" 셀에서는 wrap_text가 켜져 있어도 행 높이를 자동으로 늘려주지
+# 않는다(잘 알려진 엑셀 제약) — 그래서 긴 문단이 한 줄로 눌려 보이거나, 심하면
+# 스크롤하다 "내용이 통째로 빠졌다"고 오해하기 쉽다(2026-08-05 실사용 피드백).
+# 행 높이를 직접 계산해서 지정한다.
+_EXCEL_LINE_HEIGHT_PT = 15
+_EXCEL_ROW_HEIGHT_PADDING_PT = 5
+
+
+def _wrapped_line_count(text, span_width_units):
+    """span_width_units 폭에 줄바꿈해서 넣을 때 필요한 줄 수(최소 1)."""
+    if not text:
+        return 1
+    total = 0
+    for line in _LINE_BREAK_RE.split(str(text)):
+        width = _text_width_units(line)
+        total += max(1, -(-width // max(span_width_units, 1)))  # 올림 나눗셈
+    return max(total, 1)
+
+
+def _set_row_height(ws, row, cell_texts_and_widths):
+    """그 행의 셀들 중 가장 많은 줄 수가 필요한 셀 기준으로 행 높이를 지정한다."""
+    max_lines = max(
+        (_wrapped_line_count(text, width) for text, width in cell_texts_and_widths), default=1
+    )
+    ws.row_dimensions[row].height = max_lines * _EXCEL_LINE_HEIGHT_PT + _EXCEL_ROW_HEIGHT_PADDING_PT
+
+
 def _fill(hex_color):
     return PatternFill(start_color=hex_color, end_color=hex_color, fill_type="solid")
 
@@ -168,6 +195,7 @@ def record_to_xlsx_bytes(record):
                     start_row=current_row, start_column=1 + _COL_OFFSET,
                     end_row=current_row, end_column=max_col_count + _COL_OFFSET,
                 )
+            _set_row_height(ws, current_row, [(block["text"], sum(column_widths[:max_col_count]))])
             current_row += 1
             continue
 
@@ -180,6 +208,7 @@ def record_to_xlsx_bytes(record):
                     start_row=current_row, start_column=1 + _COL_OFFSET,
                     end_row=current_row, end_column=max_col_count + _COL_OFFSET,
                 )
+            _set_row_height(ws, current_row, [(block["text"], sum(column_widths[:max_col_count]))])
             current_row += 2  # 다음 블록과 구분되도록 빈 행 하나
             continue
 
@@ -195,15 +224,20 @@ def record_to_xlsx_bytes(record):
 
         for row_offset, row_cells in enumerate(table):
             is_header = row_offset == 0
+            row_texts_and_widths = []
             for col_idx, value in enumerate(row_cells, start=1):
                 number, note = parse_ai_score_cell(value)
-                cell = ws.cell(
-                    row=current_row, column=col_idx + _COL_OFFSET,
-                    value=number if number is not None else value,
-                )
+                display_value = number if number is not None else value
+                cell = ws.cell(row=current_row, column=col_idx + _COL_OFFSET, value=display_value)
                 if note:
                     cell.comment = Comment(note, _COMMENT_AUTHOR)
                 cell.border = _THIN_BORDER
+
+                if is_kv_table and col_idx >= 2:
+                    span_width = sum(column_widths[1:max_col_count])
+                else:
+                    span_width = column_widths[col_idx - 1] if col_idx - 1 < len(column_widths) else DEFAULT_COLUMN_WIDTH
+                row_texts_and_widths.append((str(display_value) if display_value is not None else "", span_width))
 
                 if is_kv_table:
                     if col_idx == 1:
@@ -234,6 +268,7 @@ def record_to_xlsx_bytes(record):
                     end_row=current_row, end_column=max_col_count + _COL_OFFSET,
                 )
 
+            _set_row_height(ws, current_row, row_texts_and_widths)
             current_row += 1
 
             if table_index == 1 and is_header:
