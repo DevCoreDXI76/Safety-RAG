@@ -18,7 +18,7 @@ if hasattr(sys.stdout, "reconfigure"):
 import pypdf
 from reportlab.lib.pagesizes import A4, landscape
 
-from export_pdf import _build_table_element, record_to_pdf_bytes
+from export_pdf import _build_table_element, _center_x, _TitleFlowable, record_to_pdf_bytes
 from markdown_tables import parse_markdown_tables
 
 SAMPLE_RECORD = {
@@ -75,6 +75,32 @@ def run():
     print("=== export_pdf.py 스모크 테스트 ===\n")
 
     checks = []
+
+    # --- 문서 제목: 가운데정렬 + 밑줄 + 28pt + 굵게(faux-bold 2회 겹쳐 그리기) ---
+    checks.append(("제목 폰트 크기 28pt", _TitleFlowable("위험성평가표").font_size == 28))
+    checks.append(("가운데정렬 계산: 텍스트 폭이 가용폭보다 작을 때 중앙 배치", _center_x(100, 300) == 100))
+    checks.append(("가운데정렬 계산: 텍스트가 가용폭보다 크면 0에서 시작(음수 금지)", _center_x(400, 300) == 0))
+
+    class _FakeCanvas:
+        def __init__(self):
+            self.draw_calls = []
+            self.line_calls = []
+        def setFont(self, *a, **k): pass
+        def setLineWidth(self, *a, **k): pass
+        def drawString(self, x, y, text): self.draw_calls.append((x, y, text))
+        def line(self, *a, **k): self.line_calls.append(a)
+
+    title_flowable = _TitleFlowable("표준 작업계획서")
+    title_flowable.wrap(500, 1000)
+    fake_canvas = _FakeCanvas()
+    title_flowable.canv = fake_canvas
+    title_flowable.draw()
+    checks.append(("제목을 두 번 겹쳐 그려 굵게 보이게 함(faux-bold)", len(fake_canvas.draw_calls) == 2))
+    checks.append((
+        "두 번 그린 텍스트 내용이 같다(약간의 x 오프셋만 다름)",
+        fake_canvas.draw_calls[0][2] == fake_canvas.draw_calls[1][2] == "표준 작업계획서",
+    ))
+    checks.append(("밑줄이 한 번 그려짐", len(fake_canvas.line_calls) == 1))
 
     pdf_bytes = record_to_pdf_bytes(SAMPLE_RECORD)
     is_pdf = pdf_bytes[:5] == b"%PDF-"

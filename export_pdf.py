@@ -24,7 +24,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from document_styles import (
     AI_SCORE_FOOTNOTE, base_header, cell_style_decision, get_style,
@@ -35,7 +35,6 @@ from markdown_tables import parse_markdown_tables
 _FONT_NAME = "HYSMyeongJo-Medium"
 pdfmetrics.registerFont(UnicodeCIDFont(_FONT_NAME))
 
-_TITLE_STYLE = ParagraphStyle("title", fontName=_FONT_NAME, fontSize=14, leading=18, spaceAfter=12)
 _BODY_STYLE = ParagraphStyle("body", fontName=_FONT_NAME, fontSize=10.5, leading=15)
 _CELL_STYLE_LEFT = ParagraphStyle("cell_left", fontName=_FONT_NAME, fontSize=9, leading=11, alignment=TA_LEFT)
 _CELL_STYLE_CENTER = ParagraphStyle("cell_center", fontName=_FONT_NAME, fontSize=9, leading=11, alignment=TA_CENTER)
@@ -70,6 +69,48 @@ _MIN_COL_WIDTH_PT = 30
 # 실제 예약되는 패딩보다 작으면 텍스트가 줄바꿈되는 문제가 재발한다.
 _CELL_H_PADDING_PT = 2 * _CELL_SIDE_PADDING_PT + 4
 _LINE_BREAK_RE = re.compile(r"<br\s*/?>|\n")
+
+
+_TITLE_FONT_SIZE = 28
+
+
+def _center_x(text_width, avail_width):
+    """가운데 정렬 x좌표. 텍스트가 가용폭보다 넓으면 0(음수 좌표 방지)."""
+    return max((avail_width - text_width) / 2, 0)
+
+
+class _TitleFlowable(Flowable):
+    """
+    문서 제목: 가운데정렬 + 밑줄 + 28pt + 굵게.
+    CID 폰트(HYSMyeongJo-Medium)에는 검증된 Bold 변형이 없어(파일 상단 설명
+    참고), 같은 텍스트를 아주 살짝(0.4pt) 겹쳐서 두 번 그리는 faux-bold로
+    굵게 보이게 한다. 밑줄은 텍스트 폭만큼 직접 선을 그어 구현한다.
+    """
+
+    def __init__(self, text, font_name=None, font_size=_TITLE_FONT_SIZE):
+        super().__init__()
+        self.text = text
+        self.font_name = font_name or _FONT_NAME
+        self.font_size = font_size
+        self._text_width = pdfmetrics.stringWidth(text, self.font_name, font_size)
+        self._bold_offset = 0.4
+        self.width = 0
+        self.height = font_size * 1.6
+
+    def wrap(self, availWidth, availHeight):
+        self.width = availWidth
+        return availWidth, self.height
+
+    def draw(self):
+        canv = self.canv
+        canv.setFont(self.font_name, self.font_size)
+        x = _center_x(self._text_width, self.width)
+        baseline_y = self.height - self.font_size
+        canv.drawString(x, baseline_y, self.text)
+        canv.drawString(x + self._bold_offset, baseline_y, self.text)
+        underline_y = baseline_y - 4
+        canv.setLineWidth(1.1)
+        canv.line(x, underline_y, x + self._text_width + self._bold_offset, underline_y)
 
 
 def _hex_color(hex_str):
@@ -198,7 +239,7 @@ def record_to_pdf_bytes(record):
         buffer, pagesize=landscape(A4),
         title=document_type, author="Safety-RAG",
     )
-    elements = [Paragraph(escape(document_type), _TITLE_STYLE), Spacer(1, 12)]
+    elements = [_TitleFlowable(document_type), Spacer(1, 12)]
 
     if not tables:
         body_text = escape(record["draft"]).replace("\n", "<br/>")
