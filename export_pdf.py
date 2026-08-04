@@ -88,13 +88,35 @@ _PAGE_MARGIN_PT = 20
 # 드러나던 문제, 2026-08-04 피드백).
 _CONTENT_INDENT_PT = 14
 
-# "참석자 명단(서명 필수)" 같은 서명란 표는 LLM이 만들어주는 빈 행 개수가
-# 들쭉날쭉해 실사용에 부족한 경우가 있었다(2026-08-04 요청 — 최소 10명 분량
-# 확보 + 손글씨로 쓸 수 있을 만큼 행 높이 확대). 프롬프트에 의존하지 않고
-# 렌더링 단계에서 결정적으로 보장한다.
-_SIGNATURE_TABLE_KEYWORDS = ("참석자", "서명")
+# 표 앞 헤딩 텍스트로 특수 레이아웃을 판정한다. 세 가지는 서로 독립적이다:
+#
+# - 행 패딩(pad_rows): "참석자 명단"처럼 인원 수가 가변적인 명단만 대상.
+#   "작성·검토·승인 서명란"도 "서명"이 들어있지만 이미 정확히 3행(성명/서명/
+#   날짜)이라 패딩하면 불필요한 빈 행이 잔뜩 붙는다(2026-08-05 피드백으로
+#   "참석자"만 남기고 "서명"은 이 목적에서 제외).
+# - 행 높이 확대(tall_rows): 손글씨(서명 등)를 쓸 표는 전부 대상 — 참석자
+#   명단과 작성·검토·승인 서명란 둘 다.
+# - 균등폭(equal_width_cols): 병렬 구조라 셀 내용 길이가 아니라 항목 개수로
+#   폭을 나눠야 자연스러운 표들(서명란 전체 + 근로자 참여 확인·결재란).
+_ROW_PAD_HEADING_KEYWORDS = ("참석자",)
+_TALL_ROW_HEADING_KEYWORDS = ("참석자", "서명")
+_EQUAL_WIDTH_HEADING_KEYWORDS = ("참석자", "서명", "참여 확인", "결재란")
+
 _SIGNATURE_TABLE_MIN_ROWS = 10
 _SIGNATURE_ROW_HEIGHT_PT = 30
+
+
+def _wants_row_padding(heading_text):
+    return heading_text is not None and any(k in heading_text for k in _ROW_PAD_HEADING_KEYWORDS)
+
+
+def _wants_tall_rows(heading_text):
+    return heading_text is not None and any(k in heading_text for k in _TALL_ROW_HEADING_KEYWORDS)
+
+
+def _wants_equal_width_columns(heading_text):
+    return heading_text is not None and any(k in heading_text for k in _EQUAL_WIDTH_HEADING_KEYWORDS)
+
 
 # "(빈칸 - 현장 기재)"류 플레이스홀더는 실제 내용이 아니라 안내문이므로
 # 연한 회색으로 구분해 표시한다(2026-08-04 요청). escape() 이후의 텍스트에
@@ -107,10 +129,6 @@ def _highlight_placeholders(escaped_text):
     return _PLACEHOLDER_RE.sub(
         lambda m: f'<font color="#{_PLACEHOLDER_COLOR}">{m.group(0)}</font>', escaped_text
     )
-
-
-def _is_signature_heading(heading_text):
-    return heading_text is not None and any(k in heading_text for k in _SIGNATURE_TABLE_KEYWORDS)
 
 
 def _pad_table_rows(table, min_data_rows):
@@ -269,23 +287,26 @@ def _fit_cell_text(text, col_width, font_size):
     return text[: max_chars - 1].rstrip() + "…"
 
 
-def _build_table_element(table, frame_width, document_type, is_signature_table=False):
+def _build_table_element(
+    table, frame_width, document_type, pad_rows=False, tall_rows=False, equal_width_cols=False,
+):
     """
     Markdown에서 파싱한 표 1개(list[list[str]])를 프레임 폭에 맞춰 wrap되는
     Table 플로어블로 만든다. document_styles의 문서유형별 열비율·헤더/위험등급
     배경색·헤더별 정렬을 적용하고, AI 제안값이 하나라도 있었는지 함께 반환한다.
-    is_signature_table=True면 데이터 행을 최소 _SIGNATURE_TABLE_MIN_ROWS개까지
-    빈 행으로 채우고, 각 행 높이를 서명 가능한 정도로 키운다.
+    pad_rows=True면 데이터 행을 최소 _SIGNATURE_TABLE_MIN_ROWS개까지 빈 행으로
+    채운다. tall_rows=True면 행 높이를 서명 가능한 정도로 키운다.
+    equal_width_cols=True면 내용 길이 대신 균등폭(+ 한글 10자 이상 최소폭)을 쓴다.
     """
-    if is_signature_table:
+    if pad_rows:
         table = _pad_table_rows(table, _SIGNATURE_TABLE_MIN_ROWS)
 
     ncols = max(len(row) for row in table)
     style = get_style(document_type)
 
-    if is_signature_table:
-        # 서명란은 대부분 빈 칸이라 "자연폭"이 거의 0이다 — 내용 기반 배분에
-        # 맡기면 손글씨 쓸 공간이 안 나온다. 균등폭 + 한글 10자 이상 보장되는
+    if equal_width_cols:
+        # 서명란·결재란 등은 대부분 빈 칸이라 "자연폭"이 거의 0이다 — 내용
+        # 기반 배분에 맡기면 칸이 안 나온다. 균등폭 + 한글 10자 이상 보장되는
         # 최소폭 중 큰 쪽을 그대로 쓴다.
         min_width = 10 * _CELL_STYLE_LEFT.fontSize
         col_widths = [max(frame_width / ncols, min_width)] * ncols
@@ -332,7 +353,7 @@ def _build_table_element(table, frame_width, document_type, is_signature_table=F
     # repeatRows=1: 표가 페이지 경계를 넘어가면 0번째 행(헤더)을 다음
     # 페이지에도 반복해서 그린다.
     row_heights = None
-    if is_signature_table:
+    if tall_rows:
         row_heights = [None] + [_SIGNATURE_ROW_HEIGHT_PT] * (len(table) - 1)
 
     table_flowable = Table(
@@ -373,7 +394,9 @@ def _build_elements(blocks, document_type, doc_width):
             effective_width = doc_width - (_CONTENT_INDENT_PT if indent_open else 0)
             table_flowable, ai_value_present = _build_table_element(
                 block["rows"], effective_width, document_type,
-                is_signature_table=_is_signature_heading(last_heading_text),
+                pad_rows=_wants_row_padding(last_heading_text),
+                tall_rows=_wants_tall_rows(last_heading_text),
+                equal_width_cols=_wants_equal_width_columns(last_heading_text),
             )
             elements.append(table_flowable)
             if ai_value_present:

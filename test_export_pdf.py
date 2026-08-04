@@ -22,7 +22,8 @@ from reportlab.platypus import Indenter, Table
 from export_pdf import (
     _BODY_STYLE, _BOX_TITLE_STYLE, _build_elements, _build_table_element, _CELL_STYLE_CENTER,
     _CELL_STYLE_LEFT, _center_x, _CONTENT_INDENT_PT, _hex_color, _highlight_placeholders,
-    _PAGE_MARGIN_PT, _PDF_HEADER_FILL, _PLACEHOLDER_COLOR, _TitleFlowable, record_to_pdf_bytes,
+    _PAGE_MARGIN_PT, _PDF_HEADER_FILL, _PLACEHOLDER_COLOR, _TitleFlowable, _wants_equal_width_columns,
+    _wants_row_padding, _wants_tall_rows, record_to_pdf_bytes,
 )
 from document_styles import STYLE_SPECS
 from markdown_tables import parse_markdown_blocks, parse_markdown_tables
@@ -291,6 +292,20 @@ def run():
     ))
     checks.append(("헤딩 아래 표는 hAlign='LEFT'", all(t.hAlign == "LEFT" for t in tables_in_elements)))
 
+    # --- 헤딩 텍스트별로 pad_rows/tall_rows/equal_width_cols 판정이 정확히 갈림 ---
+    # "참석자 명단"만 행 패딩 대상 — "작성·검토·승인 서명란"은 "서명"이 들어있지만
+    # 이미 정확히 3행(성명/서명/날짜)이라 패딩하면 안 된다(2026-08-05 피드백:
+    # 불필요한 빈 행이 잔뜩 붙어서 나왔음).
+    checks.append(("'참석자 명단' 헤딩은 행 패딩 대상", _wants_row_padding("7. 참석자 명단 (서명 필수)")))
+    checks.append(("'작성·검토·승인 서명란' 헤딩은 행 패딩 대상 아님", not _wants_row_padding("18. 작성·검토·승인 서명란")))
+    checks.append(("'참석자 명단' 헤딩은 행 높이 확대 대상", _wants_tall_rows("7. 참석자 명단 (서명 필수)")))
+    checks.append(("'작성·검토·승인 서명란' 헤딩도 행 높이 확대 대상(서명 칸)", _wants_tall_rows("18. 작성·검토·승인 서명란")))
+    checks.append(("'근로자 참여 확인' 헤딩은 균등폭 대상", _wants_equal_width_columns("4. 근로자 참여 확인")))
+    checks.append(("'결재란' 헤딩은 균등폭 대상", _wants_equal_width_columns("5. 결재란")))
+    checks.append(("무관한 헤딩은 셋 다 해당 없음", not any([
+        _wants_row_padding("1. 기본 정보"), _wants_tall_rows("1. 기본 정보"), _wants_equal_width_columns("1. 기본 정보"),
+    ])))
+
     # --- 참석자 명단(서명 필수) 표는 최소 10행 확보 + 손글씨 서명 가능한 행 높이 ---
     roster_record = {
         "document_type": "TBM 일지",
@@ -303,7 +318,8 @@ def run():
     roster_blocks = parse_markdown_blocks(roster_record["draft"])
     roster_table_rows = [b["rows"] for b in roster_blocks if b["type"] == "table"][0]
     roster_flowable, _ = _build_table_element(
-        roster_table_rows, frame_width, roster_record["document_type"], is_signature_table=True
+        roster_table_rows, frame_width, roster_record["document_type"],
+        pad_rows=True, tall_rows=True, equal_width_cols=True,
     )
     checks.append(("참석자 명단 표는 헤더 제외 최소 10행으로 패딩됨", len(roster_flowable._cellvalues) - 1 >= 10))
     checks.append(("_build_table_element이 만든 표는 hAlign='LEFT'", roster_flowable.hAlign == "LEFT"))
@@ -311,27 +327,51 @@ def run():
         "참석자 명단 표의 데이터 행 높이가 30pt로 확대됨",
         all(h == 30 for h in roster_flowable._argH[1:]),
     ))
-    # 실사용 조건(세로형 A4 + 여백 15pt + 박스 들여쓰기 14pt)의 좁은 폭에서도
+    # 실사용 조건(세로형 A4 + 여백 20pt + 박스 들여쓰기 14pt)의 좁은 폭에서도
     # 서명란 열 폭이 한글 10자 이상 확보되는지 — 넉넉한 landscape 폭으로
     # 테스트하면 우연히 통과해버려서(자연폭 비례 배분만으로도 넓어짐)
     # 실제 좁은 폭을 명시적으로 재현한다.
     narrow_signature_width = portrait(A4)[0] - 2 * _PAGE_MARGIN_PT - _CONTENT_INDENT_PT
     narrow_roster_flowable, _ = _build_table_element(
-        roster_table_rows, narrow_signature_width, roster_record["document_type"], is_signature_table=True
+        roster_table_rows, narrow_signature_width, roster_record["document_type"],
+        pad_rows=True, tall_rows=True, equal_width_cols=True,
     )
     checks.append((
         "세로형 A4의 좁은 폭에서도 서명란 열 폭이 한글 10자 이상 확보됨",
         all(w >= 10 * _CELL_STYLE_LEFT.fontSize for w in narrow_roster_flowable._colWidths),
     ))
     checks.append((
-        "일반 표(is_signature_table 기본값)는 패딩되지 않음",
+        "일반 표(플래그 기본값)는 패딩되지 않음",
         len(mixed_flowable._cellvalues) - 1 == 1,
     ))
 
-    # --- record_to_pdf_bytes 전체 파이프라인에서도 "참석자"/"서명" 헤딩 뒤
-    # 표가 자동으로 서명란 처리되는지(직전 헤딩 텍스트로 판정) ---
+    # --- "작성·검토·승인 서명란"(정확히 3행) 표는 패딩 없이 그대로 3행 유지 ---
+    approval_record = {
+        "document_type": "표준 작업계획서",
+        "draft": (
+            "### 18. 작성·검토·승인 서명란\n\n"
+            "| 작성자 | 검토자 | 승인자 |\n|------|------|------|\n"
+            "| (빈칸) | (빈칸) | (빈칸) |\n"
+            "| 서명: (빈칸) | 서명: (빈칸) | 서명: (빈칸) |\n"
+            "| 날짜: (빈칸) | 날짜: (빈칸) | 날짜: (빈칸) |\n"
+        ),
+    }
+    approval_blocks = parse_markdown_blocks(approval_record["draft"])
+    approval_table_rows = [b["rows"] for b in approval_blocks if b["type"] == "table"][0]
+    approval_flowable, _ = _build_table_element(
+        approval_table_rows, frame_width, approval_record["document_type"],
+        pad_rows=_wants_row_padding(approval_blocks[0]["text"]),
+        tall_rows=_wants_tall_rows(approval_blocks[0]["text"]),
+        equal_width_cols=_wants_equal_width_columns(approval_blocks[0]["text"]),
+    )
+    checks.append(("작성·검토·승인 서명란은 정확히 3행 유지(불필요한 패딩 없음)", len(approval_flowable._cellvalues) - 1 == 3))
+    checks.append(("작성·검토·승인 서명란도 서명 칸이라 행 높이는 30pt", all(h == 30 for h in approval_flowable._argH[1:])))
+
+    # --- record_to_pdf_bytes 전체 파이프라인에서도 헤딩 텍스트로 자동 판정됨 ---
     roster_pdf = record_to_pdf_bytes(roster_record)
     checks.append(("참석자 명단 표 포함 PDF도 정상 생성됨", roster_pdf[:5] == b"%PDF-"))
+    approval_pdf = record_to_pdf_bytes(approval_record)
+    checks.append(("작성·검토·승인 서명란 표 포함 PDF도 정상 생성됨", approval_pdf[:5] == b"%PDF-"))
 
     # --- 표가 여러 페이지에 걸치면 헤더 행(열 제목)이 각 페이지에 반복됨 ---
     many_rows_lines = ["| 번호 | 위험요인 | 감소대책 |", "|------|------|------|"]
