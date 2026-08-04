@@ -15,6 +15,7 @@ TTF 폰트 파일을 저장소에 넣지 않아도 Railway(Linux) 환경에서 �
 """
 
 import io
+import re
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -27,7 +28,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 from document_styles import (
     AI_SCORE_FOOTNOTE, base_header, cell_style_decision, get_style,
-    parse_ai_score_cell, resolve_column_weights, risk_grade_column_indices,
+    parse_ai_score_cell, risk_grade_column_indices,
 )
 from markdown_tables import parse_markdown_tables
 
@@ -40,11 +41,20 @@ _CELL_STYLE_LEFT = ParagraphStyle("cell_left", fontName=_FONT_NAME, fontSize=9, 
 _CELL_STYLE_CENTER = ParagraphStyle("cell_center", fontName=_FONT_NAME, fontSize=9, leading=11, alignment=TA_CENTER)
 _FOOTNOTE_STYLE = ParagraphStyle("footnote", fontName=_FONT_NAME, fontSize=8, leading=10, textColor=colors.grey)
 
+_CELL_SIDE_PADDING_PT = 3  # LEFTPADDING/RIGHTPADDING 각각 — _CELL_H_PADDING_PT와 반드시 짝이 맞아야 함
+
 _BASE_TABLE_STYLE_COMMANDS = [
     ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
     ("FONTNAME", (0, 0), (-1, -1), _FONT_NAME),
     ("FONTSIZE", (0, 0), (-1, -1), 9),
     ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    # reportlab Table의 기본 LEFTPADDING/RIGHTPADDING(각 6pt)을 그대로 두면
+    # _content_aware_col_widths가 계산한 "글자가 들어갈 폭"보다 실제 사용
+    # 가능한 폭이 더 좁아져 짧은 텍스트도 줄바꿈되는 문제가 있었다(2026-08-04
+    # 발견 — "작업단계" 4글자 헤더가 두 줄로 쪼개짐). 패딩을 명시적으로 고정해
+    # 폭 계산과 실제 렌더링이 어긋나지 않게 한다.
+    ("LEFTPADDING", (0, 0), (-1, -1), _CELL_SIDE_PADDING_PT),
+    ("RIGHTPADDING", (0, 0), (-1, -1), _CELL_SIDE_PADDING_PT),
 ]
 
 # 셀 하나가 페이지 하나보다 커지는 걸 막는 안전 상한(줄 수). document_styles의
@@ -55,9 +65,58 @@ _BASE_TABLE_STYLE_COMMANDS = [
 # 실제 발생·재현·확인, test_export_pdf.py 참고).
 _MAX_CELL_LINES = 24
 
+_MIN_COL_WIDTH_PT = 30
+# 표 자체의 좌우 패딩(_CELL_SIDE_PADDING_PT 두 배) 위에 여유 4pt를 더한다 —
+# 실제 예약되는 패딩보다 작으면 텍스트가 줄바꿈되는 문제가 재발한다.
+_CELL_H_PADDING_PT = 2 * _CELL_SIDE_PADDING_PT + 4
+_LINE_BREAK_RE = re.compile(r"<br\s*/?>|\n")
+
 
 def _hex_color(hex_str):
     return colors.HexColor("#" + hex_str)
+
+
+def _measure_max_line_width(text, font_size):
+    """
+    셀 텍스트에 <br>/개행이 있으면 줄 단위로 나눠 가장 긴 한 줄의 렌더 폭을,
+    없으면 전체 텍스트의 폭을 그대로 잰다. 여러 줄짜리 셀을 한 줄로 보고
+    폭을 과대 측정하는 걸 막기 위함이다.
+    """
+    lines = _LINE_BREAK_RE.split(text) if text else [""]
+    if not lines:
+        lines = [""]
+    return max(pdfmetrics.stringWidth(line, _FONT_NAME, font_size) for line in lines)
+
+
+def _content_aware_col_widths(raw_rows, ncols, frame_width, font_size):
+    """
+    각 열의 '자연 폭'(그 열에서 가장 긴 한 줄의 렌더 폭 + 좌우 여백)을 측정해
+    열 너비를 정한다. 모든 열에 최소폭(_MIN_COL_WIDTH_PT)을 먼저 보장하고,
+    남는 공간을 각 열이 최소폭을 넘어 실제로 더 필요로 하는 만큼에 비례해서만
+    나눠준다 — "예/아니오"처럼 짧은 열은 최소폭에 머물고, 서술형 열이 남는
+    공간을 가져간다. 특정 한 열의 자연폭이 아무리 커도 가져갈 수 있는 몫은
+    '남는 공간' 전체를 넘지 못하므로, 다른 열의 최소폭을 침해할 수 없다
+    (표준 작업계획서 12열 표에서 셀 하나 때문에 다른 열이 다 눌리던 문제의
+    구조적 재발 방지). 합계는 항상 frame_width와 같다.
+    """
+    natural = []
+    for col in range(ncols):
+        widest = 0.0
+        for row in raw_rows:
+            text = row[col] if col < len(row) else ""
+            widest = max(widest, _measure_max_line_width(text, font_size))
+        natural.append(widest + _CELL_H_PADDING_PT)
+
+    floor = min(_MIN_COL_WIDTH_PT, frame_width / ncols)
+    reserved = floor * ncols
+    surplus = max(frame_width - reserved, 0)
+    extra_need = [max(w - floor, 0) for w in natural]
+    total_extra_need = sum(extra_need)
+
+    if total_extra_need == 0:
+        return [floor + surplus / ncols] * ncols
+
+    return [floor + surplus * (need / total_extra_need) for need in extra_need]
 
 
 def _fit_cell_text(text, col_width, font_size):
@@ -82,9 +141,7 @@ def _build_table_element(table, frame_width, document_type):
     ncols = max(len(row) for row in table)
     style = get_style(document_type)
 
-    weights = resolve_column_weights(style, ncols)
-    total_weight = sum(weights)
-    col_widths = [frame_width * w / total_weight for w in weights]
+    col_widths = _content_aware_col_widths(table, ncols, frame_width, _CELL_STYLE_LEFT.fontSize)
 
     is_kv_table = ncols == 2
     headers_base = [base_header(h) for h in table[0]]

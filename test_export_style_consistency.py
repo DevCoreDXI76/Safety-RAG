@@ -101,21 +101,21 @@ def run():
         pdf_a_color_ok,
     ))
 
-    # PDF: 열너비 "비율"이 스펙과 일치하는지(색상만 맞고 폭이 어긋나는 회귀를 잡기 위함).
-    # reportlab Table은 생성자에 넘긴 colWidths를 _colWidths에 그대로 보관한다
-    # (test_export_style_consistency.py 작성 전 아래 명령으로 속성명을 직접 확인함:
-    #   python -c "from reportlab.platypus import Table; t = Table([['a','b']], colWidths=[10,20]); print(t._colWidths)"
-    #  -> [10, 20]).
+    # PDF: 열너비는 더 이상 document_styles의 정적 비율을 따르지 않는다
+    # (2026-08-04부터 PDF만 실제 셀 내용 길이 기반 content-aware 배분으로 전환 —
+    # docs/superpowers/plans/2026-08-04-pdf-서식-개선.md 참고). XLSX/HWPX는
+    # 계속 정적 비율을 쓰므로 이 표만 셋의 열비율이 서로 달라도 정상이다.
+    # 대신 PDF가 지켜야 할 불변식만 검증한다: 열 개수 일치 + 너비 합이 frame_width.
     pdf_ncols = max(len(row) for row in tables[0])
     pdf_col_widths = table_flowable._colWidths
-    pdf_total = sum(pdf_col_widths)
-    pdf_spec_widths = style.column_widths[:pdf_ncols]
-    pdf_spec_total = sum(pdf_spec_widths)
-    pdf_ratios_ok = len(pdf_col_widths) == pdf_ncols and all(
-        abs(w / pdf_total - spec_w / pdf_spec_total) < 0.01
-        for w, spec_w in zip(pdf_col_widths, pdf_spec_widths)
-    )
-    checks.append(("PDF: 열너비 비율이 스펙(column_widths)과 일치", pdf_ratios_ok))
+    checks.append((
+        "PDF: 열 개수만큼 너비가 계산됨",
+        len(pdf_col_widths) == pdf_ncols,
+    ))
+    checks.append((
+        "PDF: 열너비 합이 frame_width와 일치(content-aware 배분, 정적 비율 아님)",
+        abs(sum(pdf_col_widths) - frame_width) < 1,
+    ))
 
     # HWPX: 같은 hex 색상이 XML에 기록되는지
     hwpx_bytes = record_to_hwpx_bytes(RECORD)

@@ -60,6 +60,16 @@ SAMPLE_RECORD_WITH_SCORE = {
     ),
 }
 
+SAMPLE_RECORD_MIXED_WIDTH = {
+    "document_type": "TBM 일지",
+    "draft": (
+        "| 확인항목 | 이행여부 |\n"
+        "|------|------|\n"
+        "| 오늘 작업은 지중 굴착 및 광케이블 매설로, 굴착 깊이 2미터를 초과하는 구간이 "
+        "포함되어 있어 흙막이 지보공 설치와 붕괴 위험 점검이 필수적으로 선행되어야 함 | 예 |\n"
+    ),
+}
+
 
 def run():
     print("=== export_pdf.py 스모크 테스트 ===\n")
@@ -124,6 +134,21 @@ def run():
         narrow_ok = False
         print(f"  (좁은 열 긴 텍스트 케이스에서 예외 발생: {type(e).__name__})")
     checks.append(("좁은 열(12열 표 1열)에 긴 텍스트가 와도 PDF 생성이 실패하지 않음", narrow_ok))
+
+    # --- 열 너비가 실제 내용 길이에 비례해 배분됨(짧은 "예" 열은 좁고, 서술형 열은 넓음) ---
+    mixed_tables = parse_markdown_tables(SAMPLE_RECORD_MIXED_WIDTH["draft"])
+    mixed_flowable, _ = _build_table_element(
+        mixed_tables[0], frame_width, SAMPLE_RECORD_MIXED_WIDTH["document_type"]
+    )
+    mixed_widths = mixed_flowable._colWidths
+    checks.append((
+        "서술형 열(0)이 짧은 '예/아니오' 열(1)보다 훨씬 넓다",
+        mixed_widths[0] > mixed_widths[1] * 3,
+    ))
+    checks.append((
+        "열 너비 합이 frame_width와 같다(빈 공간 없이 꽉 참)",
+        abs(sum(mixed_widths) - frame_width) < 1,
+    ))
 
     print()
     all_ok = True
