@@ -83,7 +83,7 @@ def load_project_data(user_id, project_name):
         return json.load(f)
 
 
-def save_project_record(user_id, project_name, document_type, project_info, draft):
+def save_project_record(user_id, project_name, document_type, project_info, draft, work_type=None):
     """현장 기록을 저장하고, 저장된 레코드(id 포함)를 반환한다."""
     ensure_projects_dir(user_id)
     filepath = os.path.join(PROJECTS_DIR, str(user_id), f"{project_name}.json")
@@ -96,6 +96,8 @@ def save_project_record(user_id, project_name, document_type, project_info, draf
         "draft": draft,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+    if work_type:
+        record["work_type"] = work_type
     data["records"].append(record)
 
     with open(filepath, "w", encoding="utf-8") as f:
@@ -372,7 +374,7 @@ def _build_generation_prompt(document_type, project_info, project_name=None, ris
     return system_param, user_content_blocks, context, linked_risk_context
 
 
-def _finalize_draft(draft, context, linked_risk_context, document_type, project_info, project_name, user_id):
+def _finalize_draft(draft, context, linked_risk_context, document_type, project_info, project_name, user_id, work_type=None):
     """
     스트리밍이 끝난 뒤든 non-streaming 응답을 받은 직후든, draft 텍스트가
     확정된 다음에 공통으로 수행하는 후처리(인용 검증 경고 부착 + 현장 기록
@@ -424,7 +426,7 @@ def _finalize_draft(draft, context, linked_risk_context, document_type, project_
 
     saved_record = None
     if project_name and user_id:
-        saved_record = save_project_record(user_id, project_name, document_type, project_info, draft)
+        saved_record = save_project_record(user_id, project_name, document_type, project_info, draft, work_type)
 
     return draft, saved_record, warning
 
@@ -465,7 +467,7 @@ def generate_document_draft(document_type, project_info, project_name=None, risk
         block.text for block in response.content if block.type == "text"
     ).strip()
     draft, saved_record, _ = _finalize_draft(
-        draft, context, linked_risk_context, document_type, project_info, project_name, user_id
+        draft, context, linked_risk_context, document_type, project_info, project_name, user_id, work_type
     )
 
     return draft, saved_record
@@ -512,7 +514,7 @@ def generate_document_draft_stream(document_type, project_info, project_name=Non
 
     draft = "".join(chunks).strip()
     draft, saved_record, warning = _finalize_draft(
-        draft, context, linked_risk_context, document_type, project_info, project_name, user_id
+        draft, context, linked_risk_context, document_type, project_info, project_name, user_id, work_type
     )
     if warning:
         yield {"type": "delta", "text": warning}

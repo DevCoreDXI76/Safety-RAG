@@ -137,6 +137,41 @@ SAMPLE_RECORD_OTHER_DOC_TYPE = {
     "created_at": "2026-08-05 10:00:00",
 }
 
+# 2026-08-05 요청: 위험성평가표는 틀고정 제거, 작업계획서는 "작업 개요"
+# 박스(첫 표) 바로 다음에 틀고정. 두 박스 이상을 가진 draft로 검증한다.
+SAMPLE_RECORD_FREEZE_RISK = {
+    "id": "freeze1",
+    "document_type": "위험성평가표",
+    "project_info": "틀고정 제거 검증용",
+    "draft": (
+        "## ■ 기본 정보\n\n| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남 |\n\n"
+        "## ■ 위험요인\n\n| 순번 | 위험요인 | 위험성 |\n|------|------|------|\n| 1 | 감전 | 9 |\n"
+    ),
+    "created_at": "2026-08-05 10:00:00",
+}
+
+SAMPLE_RECORD_FREEZE_WORKPLAN = {
+    "id": "freeze2",
+    "document_type": "표준 작업계획서",
+    "project_info": "작업 개요 박스 다음 틀고정 검증용",
+    "draft": (
+        "## ■ 작업 개요\n\n| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남 |\n| 공종 | 전기 |\n\n"
+        "## ■ 사전조사 결과\n\n| 항목 | 내용 |\n|------|------|\n| 확인사항 | 없음 |\n"
+    ),
+    "created_at": "2026-08-05 10:00:00",
+}
+
+# 2026-08-05 요청: "표준 작업계획서 (전기 작업)"처럼 문서 제목 옆에 세부
+# 작업유형을 표기 — work_type이 record에 있을 때만 붙는다.
+SAMPLE_RECORD_WORKPLAN_WITH_WORKTYPE = {
+    "id": "worktype1",
+    "document_type": "표준 작업계획서",
+    "project_info": "작업유형 표기 검증용",
+    "work_type": "전기작업",
+    "draft": "| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남 |\n",
+    "created_at": "2026-08-05 10:00:00",
+}
+
 
 def run():
     results = []
@@ -341,6 +376,41 @@ def run():
         long_kv_row_height is not None and short_row_height is not None
         and long_kv_row_height > short_row_height * 1.5,
     ))
+
+    # --- 2026-08-05 요청: 문서 전체가 A4 용지에 맞게 출력되도록 용지 크기를
+    # 명시하고, 표준 작업계획서·TBM 일지는 PDF와 동일하게 세로방향으로 낸다 ---
+    results.append(("위험성평가표는 가로방향 유지", ws.page_setup.orientation == "landscape"))
+    results.append(("위험성평가표도 A4 용지 크기가 명시됨", ws.page_setup.paperSize == 9))
+    results.append(("TBM 일지는 세로방향(A4 세로) 적용", ws_prose.page_setup.orientation == "portrait"))
+    results.append(("TBM 일지도 A4 용지 크기가 명시됨", ws_prose.page_setup.paperSize == 9))
+
+    # --- "엑셀 기능중에 틀고정 기능은 빼줘"(위험성평가표) — 표가 많아 스크롤이
+    # 잦은 문서라 틀고정이 오히려 헤더를 가려서 혼란을 준다는 피드백 ---
+    xlsx_bytes_freeze_risk = record_to_xlsx_bytes(SAMPLE_RECORD_FREEZE_RISK)
+    ws_freeze_risk = load_workbook(io.BytesIO(xlsx_bytes_freeze_risk)).active
+    results.append(("위험성평가표는 틀고정을 쓰지 않음", ws_freeze_risk.freeze_panes is None))
+    results.append(("SAMPLE_RECORD(위험성평가표)도 틀고정 없음", ws.freeze_panes is None))
+
+    # --- "작업 개요 박스 다음에 틀고정 기능을 넣어줘"(표준 작업계획서) — 문서가
+    # 길어서 스크롤하면 작업 개요가 안 보인다는 피드백. SAMPLE_RECORD_FREEZE_WORKPLAN은
+    # 1행 제목, 2행 헤딩("■ 작업 개요"), 3행 표헤더, 4~5행 데이터, 6행 빈행(표 사이
+    # 간격) 다음인 7행부터가 두 번째 박스 — 그 경계인 7행 위쪽을 고정한다.
+    xlsx_bytes_freeze_wp = record_to_xlsx_bytes(SAMPLE_RECORD_FREEZE_WORKPLAN)
+    ws_freeze_wp = load_workbook(io.BytesIO(xlsx_bytes_freeze_wp)).active
+    results.append(("표준 작업계획서는 첫 번째 박스(작업 개요) 바로 다음 행에 틀고정", ws_freeze_wp.freeze_panes == "A7"))
+    results.append(("표준 작업계획서는 세로방향(A4 세로) 적용", ws_freeze_wp.page_setup.orientation == "portrait"))
+    results.append(("표준 작업계획서도 A4 용지 크기가 명시됨", ws_freeze_wp.page_setup.paperSize == 9))
+
+    # --- TBM 일지는 세로방향으로 바뀌어도 틀고정 위치는 기존 방식(두 번째 표
+    # 헤더 다음) 그대로 유지되어야 한다(작업계획서만 별도 요청된 사항) ---
+    results.append(("TBM 일지는 틀고정 위치가 기존 방식(두 번째 표 헤더 다음) 그대로 유지됨", ws_prose.freeze_panes == "A8"))
+
+    # --- "표준 작업계획서 제목 옆에 세부 작업명을 표기해줘. 예) 표준 작업계획서
+    # (전기 작업)" — record에 work_type이 있으면 제목에 괄호로 덧붙인다 ---
+    xlsx_bytes_wt = record_to_xlsx_bytes(SAMPLE_RECORD_WORKPLAN_WITH_WORKTYPE)
+    ws_wt = load_workbook(io.BytesIO(xlsx_bytes_wt)).active
+    results.append(("work_type이 있으면 문서 제목에 괄호로 덧붙음", ws_wt.cell(row=1, column=2).value == "표준 작업계획서 (전기작업)"))
+    results.append(("work_type이 없는 기존 표준 작업계획서는 제목이 그대로 유지됨", ws_freeze_wp.cell(row=1, column=2).value == "표준 작업계획서"))
 
     all_ok = True
     for name, ok in results:

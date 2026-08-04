@@ -18,8 +18,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from document_styles import (
-    AI_SCORE_FOOTNOTE, DEFAULT_COLUMN_WIDTH, base_header, get_style, parse_ai_score_cell,
-    CENTER_ALIGN_HEADERS,
+    AI_SCORE_FOOTNOTE, DEFAULT_COLUMN_WIDTH, PORTRAIT_DOCUMENT_TYPES, base_header, get_style,
+    parse_ai_score_cell, CENTER_ALIGN_HEADERS,
 )
 from markdown_tables import parse_markdown_blocks
 
@@ -116,9 +116,23 @@ def _sheet_title(document_type):
     return cleaned[:31] or "문서"
 
 
-def _apply_print_settings(ws, title_row=None):
-    """5개 서식목업 공통 인쇄설정: 가로방향, 폭 1페이지 맞춤, 여백."""
-    ws.page_setup.orientation = "landscape"
+# ECMA-376 표준 용지 코드(paperSize) — 9 = A4. openpyxl에는 이름 상수가
+# 없어 숫자 코드를 직접 쓴다. 값을 안 주면 뷰어/프린터 환경에 따라 A4가
+# 아닌 용지로 인쇄될 수 있어(2026-08-05 "A4에 안 맞게 나옴" 피드백) 항상 명시한다.
+_PAPER_SIZE_A4 = 9
+
+# 위험성평가표는 표가 여러 개라 스크롤이 잦은데, 틀고정이 오히려 헤더 열을
+# 가려 혼란을 준다는 피드백(2026-08-05)으로 이 문서유형만 틀고정을 끈다.
+_NO_FREEZE_DOCUMENT_TYPES = {"위험성평가표"}
+# 표준 작업계획서는 문서가 길어 스크롤하면 "작업 개요" 박스가 안 보인다는
+# 피드백(2026-08-05) — 그 박스(첫 번째 표) 바로 다음 행에 틀고정한다.
+_FREEZE_AFTER_FIRST_TABLE_DOCUMENT_TYPES = {"표준 작업계획서"}
+
+
+def _apply_print_settings(ws, document_type, title_row=None):
+    """5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 폭 1페이지 맞춤, 여백."""
+    ws.page_setup.orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
+    ws.page_setup.paperSize = _PAPER_SIZE_A4
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
@@ -155,7 +169,7 @@ def record_to_xlsx_bytes(record):
 
     if not blocks:
         ws.cell(row=1, column=1, value=record["draft"])
-        _apply_print_settings(ws)
+        _apply_print_settings(ws, document_type)
         buffer = io.BytesIO()
         wb.save(buffer)
         return buffer.getvalue()
@@ -175,7 +189,12 @@ def record_to_xlsx_bytes(record):
 
     ws.column_dimensions["A"].width = _COL_A_WIDTH
 
-    title_cell = ws.cell(row=1, column=1 + _COL_OFFSET, value=document_type)
+    # "표준 작업계획서 (전기작업)"처럼 세부 작업유형을 제목 옆에 표기한다
+    # (2026-08-05 요청). work_type이 없는 기존 기록/다른 문서유형은 그대로 둔다.
+    work_type = record.get("work_type")
+    title_text = f"{document_type} ({work_type})" if work_type else document_type
+
+    title_cell = ws.cell(row=1, column=1 + _COL_OFFSET, value=title_text)
     title_cell.font = _TITLE_FONT
     title_cell.alignment = _ALIGN_TITLE_DOC
     ws.merge_cells(
@@ -185,6 +204,7 @@ def record_to_xlsx_bytes(record):
     current_row = 2
     table_index = 0
     freeze_row = None
+    first_table_next_row = None  # 첫 번째 표(+각주) 바로 다음 행 — 작업계획서 틀고정 기준
     risk_score_ranges = []  # (col_letter, first_data_row, last_data_row)
 
     for block in blocks:
@@ -307,16 +327,24 @@ def record_to_xlsx_bytes(record):
                 )
             current_row += 1
 
+        if table_index == 0:
+            first_table_next_row = current_row + 1
+
         table_index += 1
         current_row += 1  # 표 사이 빈 행
 
-    if freeze_row is None:
+    if document_type in _NO_FREEZE_DOCUMENT_TYPES:
+        freeze_row = None
+    elif document_type in _FREEZE_AFTER_FIRST_TABLE_DOCUMENT_TYPES:
+        freeze_row = first_table_next_row or 2
+    elif freeze_row is None:
         freeze_row = 2
 
     for col_idx in range(1, max_col_count + 1):
         ws.column_dimensions[get_column_letter(col_idx + _COL_OFFSET)].width = column_widths[col_idx - 1]
 
-    ws.freeze_panes = f"A{freeze_row}"
+    if freeze_row is not None:
+        ws.freeze_panes = f"A{freeze_row}"
 
     for col_letter, first_row, last_row in risk_score_ranges:
         cell_range = f"{col_letter}{first_row}:{col_letter}{last_row}"
@@ -325,7 +353,7 @@ def record_to_xlsx_bytes(record):
                 cell_range, CellIsRule(operator="equal", formula=[f'"{grade}"'], fill=fill)
             )
 
-    _apply_print_settings(ws, title_row=freeze_row - 1)
+    _apply_print_settings(ws, document_type, title_row=(freeze_row - 1) if freeze_row is not None else None)
 
     buffer = io.BytesIO()
     wb.save(buffer)

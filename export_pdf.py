@@ -28,7 +28,7 @@ from reportlab.platypus import Flowable, Indenter, Paragraph, SimpleDocTemplate,
 
 from document_styles import (
     AI_SCORE_FOOTNOTE, base_header, cell_style_decision, get_style,
-    parse_ai_score_cell, risk_grade_column_indices,
+    parse_ai_score_cell, PORTRAIT_DOCUMENT_TYPES, risk_grade_column_indices,
 )
 from markdown_tables import parse_markdown_blocks
 
@@ -143,14 +143,8 @@ def _pad_table_rows(table, min_data_rows):
     return padded
 
 
-# 위험성평가표는 열이 많은 표(최대 13열)라 가로형을 유지해야 하지만,
-# 표준 작업계획서·TBM 일지는 대부분 서술형 문단 + 좁은 표라 세로형이 더
-# 자연스럽다(2026-08-04 요청).
-_PORTRAIT_DOCUMENT_TYPES = {"표준 작업계획서", "TBM 일지"}
-
-
 def _page_size_for(document_type):
-    return portrait(A4) if document_type in _PORTRAIT_DOCUMENT_TYPES else landscape(A4)
+    return portrait(A4) if document_type in PORTRAIT_DOCUMENT_TYPES else landscape(A4)
 
 
 _TITLE_FONT_SIZE = 28

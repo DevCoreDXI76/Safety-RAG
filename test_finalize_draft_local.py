@@ -11,7 +11,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from generate_draft import _finalize_draft
+from generate_draft import _finalize_draft, load_project_data
 
 # 참고자료(컨텍스트)에는 존재하지 않는 조문 번호, 구식 곱셈법 구간표(행렬법
 # 전환 후에는 나오면 안 되는 잔존 표기), 근거 없는 이격거리 수치를 모두 담은
@@ -22,6 +22,11 @@ FAKE_DRAFT = (
     "안전대책: 제999조에 따라 통로 폭과의 여유 공간(좌우 각 최소 30cm 이상)을 확보한다."
 )
 FAKE_CONTEXT = "이 현장은 정보통신공사 국사 장비 반입 작업이다."  # 위 세 값 전부 미포함
+
+# 2026-08-05 요청: 표준 작업계획서 제목 옆에 작업유형을 표기하려면 먼저
+# work_type이 현장 기록(JSON)까지 저장되어야 한다.
+WORK_TYPE_TEST_USER = "finalize_draft_worktype_test_user"
+WORK_TYPE_TEST_PROJECT = "worktype_저장_테스트현장"
 
 
 def run():
@@ -38,6 +43,22 @@ def run():
         ("이격거리 경고 포함", "30cm" in (warning or "")),
         ("draft 끝에 경고 3종이 순서대로 append됨", warning is not None and draft.endswith(warning)),
     ]
+
+    # --- work_type이 saved_record까지 저장되는지(제목에 작업유형을 표기하려면
+    # 먼저 현장 기록 JSON에 남아 있어야 한다) ---
+    _, saved_record_wt, _ = _finalize_draft(
+        "테스트용 작업계획서 초안입니다.", "", linked_risk_context="",
+        document_type="표준 작업계획서", project_info="테스트용 project_info",
+        project_name=WORK_TYPE_TEST_PROJECT, user_id=WORK_TYPE_TEST_USER,
+        work_type="전기작업",
+    )
+    checks.append(("work_type이 saved_record에 저장됨", saved_record_wt is not None and saved_record_wt.get("work_type") == "전기작업"))
+
+    reloaded = load_project_data(WORK_TYPE_TEST_USER, WORK_TYPE_TEST_PROJECT)
+    reloaded_record = next((r for r in reloaded["records"] if r["id"] == saved_record_wt["id"]), None)
+    checks.append(("work_type이 JSON 파일에도 저장되어 재로드해도 남아있음", (
+        reloaded_record is not None and reloaded_record.get("work_type") == "전기작업"
+    )))
 
     ok = True
     for name, passed in checks:

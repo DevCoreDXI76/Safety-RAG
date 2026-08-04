@@ -43,6 +43,11 @@ STYLE_SPECS = {
     "협의체 회의록": DocumentStyle(column_widths=[20, 16, 16]),
 }
 
+# 위험성평가표는 열이 많은 표(최대 13열)라 가로형을 유지해야 하지만, 표준
+# 작업계획서·TBM 일지는 대부분 서술형 문단 + 좁은 표라 세로형이 더 자연스럽다
+# (2026-08-04 PDF 요청 — 2026-08-05부터 XLSX도 동일하게 공유).
+PORTRAIT_DOCUMENT_TYPES = {"표준 작업계획서", "TBM 일지"}
+
 _DEFAULT_STYLE = DocumentStyle(column_widths=[])
 
 # 표 헤더가(괄호 부연설명 제외) 이 목록에 속하면 가운데 정렬(짧은 값용),
