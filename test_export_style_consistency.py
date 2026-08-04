@@ -21,7 +21,7 @@ from openpyxl import load_workbook
 
 from document_styles import STYLE_SPECS
 from export_hwpx import record_to_hwpx_bytes
-from export_pdf import _build_table_element, _hex_color
+from export_pdf import _build_table_element, _hex_color, _PAGE_MARGIN_PT
 from export_xlsx import record_to_xlsx_bytes
 from markdown_tables import parse_markdown_tables
 from reportlab.lib.pagesizes import A4, landscape
@@ -86,7 +86,7 @@ def run():
 
     # PDF: 같은 표를 만들 때 위험등급 A 배경색 명령이 들어가고, 색상이 스펙과 일치하는지
     tables = parse_markdown_tables(RECORD["draft"])
-    frame_width = landscape(A4)[0] - 2 * 72
+    frame_width = landscape(A4)[0] - 2 * _PAGE_MARGIN_PT
     table_flowable, ai_present = _build_table_element(tables[0], frame_width, RECORD["document_type"])
     bg_commands = table_flowable._bkgrndcmds
     checks.append(("PDF: AI 제안값 감지됨", ai_present is True))

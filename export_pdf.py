@@ -79,6 +79,9 @@ _LINE_BREAK_RE = re.compile(r"<br\s*/?>|\n")
 # 않는다(XLSX/HWPX 헤더색은 그대로 유지).
 _PDF_HEADER_FILL = "8DA1C5"
 
+# 기본(reportlab 기본값 72pt=1인치)이 너무 넓다는 피드백으로 4방 모두 축소.
+_PAGE_MARGIN_PT = 15
+
 # "참석자 명단(서명 필수)" 같은 서명란 표는 LLM이 만들어주는 빈 행 개수가
 # 들쭉날쭉해 실사용에 부족한 경우가 있었다(2026-08-04 요청 — 최소 10명 분량
 # 확보 + 손글씨로 쓸 수 있을 만큼 행 높이 확대). 프롬프트에 의존하지 않고
@@ -319,6 +322,8 @@ def record_to_pdf_bytes(record):
     doc = SimpleDocTemplate(
         buffer, pagesize=_page_size_for(document_type),
         title=document_type, author="Safety-RAG",
+        topMargin=_PAGE_MARGIN_PT, bottomMargin=_PAGE_MARGIN_PT,
+        leftMargin=_PAGE_MARGIN_PT, rightMargin=_PAGE_MARGIN_PT,
     )
     elements = [_TitleFlowable(document_type), Spacer(1, 12)]
 

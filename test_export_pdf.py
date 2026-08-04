@@ -20,7 +20,7 @@ from reportlab.lib.pagesizes import A4, landscape, portrait
 
 from export_pdf import (
     _BODY_STYLE, _BOX_TITLE_STYLE, _build_table_element, _CELL_STYLE_CENTER, _CELL_STYLE_LEFT,
-    _center_x, _hex_color, _PDF_HEADER_FILL, _TitleFlowable, record_to_pdf_bytes,
+    _center_x, _hex_color, _PAGE_MARGIN_PT, _PDF_HEADER_FILL, _TitleFlowable, record_to_pdf_bytes,
 )
 from document_styles import STYLE_SPECS
 from markdown_tables import parse_markdown_blocks, parse_markdown_tables
@@ -96,6 +96,7 @@ def run():
     checks = []
 
     # --- 문서 제목: 가운데정렬 + 밑줄 + 28pt + 굵게(faux-bold 2회 겹쳐 그리기) ---
+    checks.append(("여백은 상하좌우 15pt로 통일", _PAGE_MARGIN_PT == 15))
     checks.append(("제목 폰트 크기 28pt", _TitleFlowable("위험성평가표").font_size == 28))
     checks.append(("박스 제목(서브 제목) 폰트 크기 18pt", _BOX_TITLE_STYLE.fontSize == 18))
     checks.append(("표 셀(왼쪽정렬) 폰트 크기 14pt", _CELL_STYLE_LEFT.fontSize == 14))
@@ -131,7 +132,7 @@ def run():
     full_text = "".join(page.extract_text() for page in reader.pages)
 
     tables = parse_markdown_tables(SAMPLE_RECORD["draft"])
-    frame_width = landscape(A4)[0] - 2 * 72
+    frame_width = landscape(A4)[0] - 2 * _PAGE_MARGIN_PT
     fits = True
     for table in tables:
         table_flowable, _ = _build_table_element(table, frame_width, SAMPLE_RECORD["document_type"])
