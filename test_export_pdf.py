@@ -215,6 +215,19 @@ def run():
     )
     checks.append(("헤더 행(열 제목)이 모든 페이지에 반복됨", pages_with_header == len(many_rows_reader.pages)))
 
+    # --- 3개 문서유형 모두 A4(가로) 페이지 크기로 통일됨 ---
+    expected_size = landscape(A4)
+    for doc_type, draft in [
+        ("위험성평가표", "| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남 |\n"),
+        ("표준 작업계획서", "| 항목 | 내용 |\n|------|------|\n| 작업유형 | 굴착작업 |\n"),
+        ("TBM 일지", "| 항목 | 내용 |\n|------|------|\n| 일자 | 2026-08-04 |\n"),
+    ]:
+        doc_pdf = record_to_pdf_bytes({"document_type": doc_type, "draft": draft})
+        doc_reader = pypdf.PdfReader(io.BytesIO(doc_pdf))
+        box = doc_reader.pages[0].mediabox
+        size_ok = abs(float(box.width) - expected_size[0]) < 1 and abs(float(box.height) - expected_size[1]) < 1
+        checks.append((f"{doc_type} PDF 페이지 크기가 A4(가로)와 일치", size_ok))
+
     print()
     all_ok = True
     for name, ok in checks:
