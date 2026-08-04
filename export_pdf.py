@@ -74,6 +74,11 @@ _MIN_COL_WIDTH_PT = 30
 _CELL_H_PADDING_PT = 2 * _CELL_SIDE_PADDING_PT + 4
 _LINE_BREAK_RE = re.compile(r"<br\s*/?>|\n")
 
+# document_styles의 공유 header_fill(진한 남색, XLSX/HWPX와 동일)보다 연하게
+# — 흰색 쪽으로 45% 블렌드한 톤. PDF 전용이며 document_styles.py는 건드리지
+# 않는다(XLSX/HWPX 헤더색은 그대로 유지).
+_PDF_HEADER_FILL = "8DA1C5"
+
 
 _TITLE_FONT_SIZE = 28
 
@@ -209,6 +214,12 @@ def _build_table_element(table, frame_width, document_type):
             center, fill_hex = cell_style_decision(
                 style, headers_base, risk_cols, is_kv_table, is_header_row, col_index, text
             )
+            # 다중열 표(위험성평가표 등)의 헤더 행 색(style.header_fill)은
+            # document_styles의 공유 스펙(XLSX/HWPX와 동일)이라 진한 남색이다.
+            # XLSX/HWPX는 건드리지 않고 PDF에서만 더 연한 톤으로 바꿔 쓴다
+            # (2026-08-04 실사용 PDF 확인 후 "너무 진하다"는 피드백으로 추가).
+            if fill_hex == style.header_fill:
+                fill_hex = _PDF_HEADER_FILL
             cell_style = _CELL_STYLE_CENTER if center else _CELL_STYLE_LEFT
             safe_text = _fit_cell_text(text, col_widths[col_index], cell_style.fontSize)
             row_cells.append(Paragraph(escape(safe_text), cell_style))
@@ -229,10 +240,10 @@ def _build_table_element(table, frame_width, document_type):
 
 def record_to_pdf_bytes(record):
     """
-    record["draft"]에서 헤딩(박스 제목)과 Markdown 표를 순서대로 파싱해
-    문서를 만든다. 표가 하나도 없으면 draft 원문을 문단 하나로 그대로
-    넣는다(XLSX/HWPX와 동일 규칙). 표 셀은 Paragraph로 감싸 렌더링하므로
-    원문을 그대로 넣기 전에 escape()한다.
+    record["draft"]에서 헤딩(박스 제목)·표·서술형 문단을 순서대로 파싱해
+    문서를 만든다. 표 셀은 Paragraph로 감싸 렌더링하므로 원문을 그대로
+    넣기 전에 escape()한다. draft가 완전히 비어있는 경우(이론상 거의 없음)만
+    원문 그대로 한 문단으로 넣는다.
     """
     blocks = parse_markdown_blocks(record["draft"])
     document_type = record["document_type"]
@@ -246,24 +257,25 @@ def record_to_pdf_bytes(record):
     )
     elements = [_TitleFlowable(document_type), Spacer(1, 12)]
 
-    table_blocks = [b for b in blocks if b["type"] == "table"]
-    if not table_blocks:
-        body_text = escape(record["draft"]).replace("\n", "<br/>")
-        elements.append(Paragraph(body_text, _BODY_STYLE))
+    if not blocks:
+        elements.append(Paragraph(escape(record["draft"]).replace("\n", "<br/>"), _BODY_STYLE))
     else:
         for block in blocks:
             if block["type"] == "heading":
                 elements.append(Paragraph(escape(block["text"]), _BOX_TITLE_STYLE))
-                continue
-
-            table_flowable, ai_value_present = _build_table_element(
-                block["rows"], doc.width, document_type
-            )
-            elements.append(table_flowable)
-            if ai_value_present:
-                elements.append(Spacer(1, 4))
-                elements.append(Paragraph(AI_SCORE_FOOTNOTE, _FOOTNOTE_STYLE))
-            elements.append(Spacer(1, 12))
+            elif block["type"] == "text":
+                body_text = escape(block["text"]).replace("\n", "<br/>")
+                elements.append(Paragraph(body_text, _BODY_STYLE))
+                elements.append(Spacer(1, 8))
+            else:
+                table_flowable, ai_value_present = _build_table_element(
+                    block["rows"], doc.width, document_type
+                )
+                elements.append(table_flowable)
+                if ai_value_present:
+                    elements.append(Spacer(1, 4))
+                    elements.append(Paragraph(AI_SCORE_FOOTNOTE, _FOOTNOTE_STYLE))
+                elements.append(Spacer(1, 12))
 
     doc.build(elements)
     return buffer.getvalue()

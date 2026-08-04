@@ -11,6 +11,7 @@ _TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
 _SEPARATOR_CELL_RE = re.compile(r"^\s*:?-{3,}:?\s*$")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _HEADING_RE = re.compile(r"^#{2,6}\s+(.+?)\s*$")
+_SEPARATOR_LINE_RE = re.compile(r"^\s*-{3,}\s*$")
 
 
 def _split_row(line):
@@ -59,25 +60,36 @@ def parse_markdown_tables(markdown_text):
 
 def parse_markdown_blocks(markdown_text):
     """
-    markdown_text를 헤딩(레벨 2~6)과 표를 순서대로 보존한 블록 리스트로
-    반환한다. parse_markdown_tables와 달리 헤딩 텍스트를 버리지 않는다 —
-    PDF가 표 앞에 "박스 제목"을 그리기 위해 필요하다(export_pdf.py 전용,
-    XLSX/HWPX는 계속 parse_markdown_tables를 쓴다).
-    레벨 1(# ...)은 문서 전체 제목과 중복이라 제외한다.
-    각 블록은 {"type": "heading", "text": str} 또는
-    {"type": "table", "rows": list[list[str]]}.
+    markdown_text를 헤딩(레벨 2~6)·표·서술형 문단(prose)을 순서대로 보존한
+    블록 리스트로 반환한다. parse_markdown_tables와 달리 표가 아닌 텍스트를
+    버리지 않는다 — "3. 중점(One Point) 위험요인"처럼 표가 아니라 문단인
+    섹션도 실제로 존재하기 때문이다(2026-08-04, 실제 생성된 PDF에서 헤딩만
+    남고 본문이 사라지는 버그로 발견). PDF가 표 앞에 "박스 제목"을 그리기
+    위해 필요하다(export_pdf.py 전용, XLSX/HWPX는 계속 parse_markdown_tables를
+    쓴다). 레벨 1(# ...)과 구분선(---)은 각각 문서 제목과 중복/장식용이라
+    제외한다.
+    각 블록은 {"type": "heading", "text": str} / {"type": "table", "rows":
+    list[list[str]]} / {"type": "text", "text": str}(여러 줄이면 "\\n"으로 이음).
     """
     blocks = []
     current_rows = []
+    current_text_lines = []
 
     def flush_table():
         if current_rows:
             blocks.append({"type": "table", "rows": current_rows[:]})
             current_rows.clear()
 
+    def flush_text():
+        text = "\n".join(current_text_lines).strip()
+        if text:
+            blocks.append({"type": "text", "text": text})
+        current_text_lines.clear()
+
     for line in markdown_text.splitlines():
         table_match = _TABLE_ROW_RE.match(line)
         if table_match:
+            flush_text()
             cells = _split_row(line)
             if _is_separator_row(cells):
                 continue
@@ -88,7 +100,20 @@ def parse_markdown_blocks(markdown_text):
 
         heading_match = _HEADING_RE.match(line)
         if heading_match:
+            flush_text()
             blocks.append({"type": "heading", "text": heading_match.group(1).strip()})
+            continue
+
+        if _SEPARATOR_LINE_RE.match(line):
+            continue
+
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            # 레벨 1 제목 등 — 문서 제목과 중복이라 제외(기존 동작 유지)
+            continue
+
+        current_text_lines.append(stripped)
 
     flush_table()
+    flush_text()
     return blocks

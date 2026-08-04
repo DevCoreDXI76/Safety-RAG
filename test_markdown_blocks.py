@@ -25,6 +25,38 @@ SAMPLE = """# 위험성평가표 초안
 """
 
 
+# 2026-08-04 실제 생성된 TBM일지/표준작업계획서 PDF에서 재현된 버그:
+# "3. 중점(One Point) 위험요인"처럼 표가 아니라 서술형 문단인 섹션은 heading만
+# 남고 본문이 통째로 사라졌다(parse_markdown_blocks가 heading/table만 인식).
+SAMPLE_WITH_PROSE = """## ■ 기본 정보
+
+| 항목 | 내용 |
+|------|------|
+| 현장명 | 강남지사 |
+
+---
+
+### 3. 중점(One Point) 위험요인
+
+오늘 작업은 활선 근접 작업이 포함되어 있으므로, 작업 전 반드시 무전압 상태를
+확인하고 검전기로 재확인한다.
+전원 재투입 시에는 전체 인원에게 사전 통보 후 실시한다.
+
+---
+
+### 4. 근로자 준수사항
+
+- 안전모, 절연장갑 착용 필수
+- 2인 1조 작업 원칙 준수
+
+## ■ 다음 표
+
+| 항목 | 내용 |
+|------|------|
+| 결과 | 정상 |
+"""
+
+
 def run():
     checks = []
     blocks = parse_markdown_blocks(SAMPLE)
@@ -44,6 +76,17 @@ def run():
     checks.append(("순서 보존: heading -> table -> heading -> table", [b["type"] for b in blocks] == [
         "heading", "table", "heading", "table",
     ]))
+
+    # --- 표가 아닌 서술형 문단(prose) 섹션도 블록으로 보존됨 ---
+    prose_blocks = parse_markdown_blocks(SAMPLE_WITH_PROSE)
+    checks.append(("블록 순서: heading,table,heading,text,heading,text,heading,table", [b["type"] for b in prose_blocks] == [
+        "heading", "table", "heading", "text", "heading", "text", "heading", "table",
+    ]))
+    prose_text_blocks = [b for b in prose_blocks if b["type"] == "text"]
+    checks.append(("'중점 위험요인' 서술형 본문이 텍스트로 보존됨", "무전압 상태" in prose_text_blocks[0]["text"]))
+    checks.append(("여러 줄 문단이 개행으로 이어져 보존됨", "전체 인원에게 사전 통보" in prose_text_blocks[0]["text"]))
+    checks.append(("불릿 목록도 텍스트로 보존됨", "2인 1조" in prose_text_blocks[1]["text"]))
+    checks.append(("구분선(---)은 텍스트 블록에 섞여 들어가지 않음", not any("---" in b["text"] for b in prose_text_blocks)))
 
     print()
     all_ok = True

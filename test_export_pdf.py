@@ -18,7 +18,8 @@ if hasattr(sys.stdout, "reconfigure"):
 import pypdf
 from reportlab.lib.pagesizes import A4, landscape
 
-from export_pdf import _build_table_element, _center_x, _TitleFlowable, record_to_pdf_bytes
+from export_pdf import _build_table_element, _center_x, _hex_color, _PDF_HEADER_FILL, _TitleFlowable, record_to_pdf_bytes
+from document_styles import STYLE_SPECS
 from markdown_tables import parse_markdown_tables
 
 SAMPLE_RECORD = {
@@ -150,6 +151,14 @@ def run():
         any(cmd[1] == (0, 0) for cmd in bg_commands),
     ))
     checks.append((
+        "PDF 헤더 행은 공유 스펙(진한 남색)이 아니라 PDF 전용 연한 톤을 씀",
+        any(cmd[1] == (0, 0) and cmd[-1] == _hex_color(_PDF_HEADER_FILL) for cmd in bg_commands),
+    ))
+    checks.append((
+        "PDF 전용 헤더색은 공유 스펙 header_fill과 다름(더 연해야 함)",
+        _PDF_HEADER_FILL != STYLE_SPECS["위험성평가표"].header_fill,
+    ))
+    checks.append((
         "위험등급 'A' 셀에 A등급 배경색 적용 (열3=위험등급, 행1)",
         any(cmd[1] == (3, 1) for cmd in bg_commands),
     ))
@@ -198,6 +207,23 @@ def run():
     checks.append(("박스 제목 '■ 기본 정보'가 PDF 본문에 포함됨", "기본 정보" in heading_text))
     checks.append(("박스 제목 '■ 중점(One Point) 위험요인'이 PDF 본문에 포함됨", "중점" in heading_text and "위험요인" in heading_text))
     checks.append(("레벨1 제목('위험성평가표 초안')은 본문에 중복 삽입되지 않음(문서 제목에서만 1번)", heading_text.count("초안") == 0))
+
+    # --- 2026-08-04 재현된 버그: 표가 아니라 서술형 문단인 섹션은 제목만 남고
+    # 본문이 통째로 사라졌었다(parse_markdown_blocks가 heading/table만 인식) ---
+    prose_record = {
+        "document_type": "TBM 일지",
+        "draft": (
+            "## ■ 기본 정보\n\n"
+            "| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남지사 |\n\n"
+            "---\n\n"
+            "### 3. 중점(One Point) 위험요인\n\n"
+            "오늘은 활선 근접 작업이 포함되어 있으므로 무전압 상태를 반드시 확인한다.\n"
+        ),
+    }
+    prose_pdf = record_to_pdf_bytes(prose_record)
+    prose_reader = pypdf.PdfReader(io.BytesIO(prose_pdf))
+    prose_text = "".join(page.extract_text() for page in prose_reader.pages)
+    checks.append(("표가 아닌 서술형 섹션의 본문 내용이 PDF에 실제로 그려짐", "무전압 상태" in prose_text))
 
     # --- 표가 여러 페이지에 걸치면 헤더 행(열 제목)이 각 페이지에 반복됨 ---
     many_rows_lines = ["| 번호 | 위험요인 | 감소대책 |", "|------|------|------|"]
