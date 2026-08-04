@@ -172,6 +172,15 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .ledger-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .ledger-actions .ledger-dl {
+    padding: 3px 8px;
+    font-size: 10.5px;
+  }
   .ledger-row .doc-time {
     font-family: var(--font-mono);
     font-size: 10.5px;
@@ -460,6 +469,15 @@
 
   const $ = (id) => document.getElementById(id);
 
+  // 텔레그램 인앱 웹뷰는 스크롤 도중 자체 UI(헤더 등)가 접히며 뷰포트 높이가
+  // 바뀌어, smooth 스크롤 애니메이션이 목표 지점 전에 멈추는 경우가 있다.
+  // 즉시 스크롤 + 뷰포트가 안정된 뒤 한 번 더 보정하는 방식으로 우회한다.
+  function scrollToSection(el) {
+    if (!el) return;
+    el.scrollIntoView({ behavior: "auto", block: "start" });
+    setTimeout(() => el.scrollIntoView({ behavior: "auto", block: "start" }), 250);
+  }
+
   // 텔레그램 Mini App initData — 백엔드가 Depends(require_telegram_auth)로 검증하는 값.
   // 브라우저 단독 실행(텔레그램 밖) 시엔 빈 문자열이 되어 401을 받게 된다.
   function telegramInitData() {
@@ -577,7 +595,7 @@
       const res = await apiFetch(`/projects/${encodeURIComponent(name)}`);
       const data = await res.json();
       state.projectRecords = data.records || [];
-      renderLedger();
+      renderLedger(name);
 
       // TBM/작업계획서가 선택되어 있는 상태였다면 위험성평가 목록도 갱신
       if (state.selectedTypeLabel && (state.selectedTypeLabel.includes("TBM") || state.selectedTypeLabel.includes("작업계획서"))) {
@@ -588,20 +606,37 @@
     }
   }
 
-  function renderLedger() {
+  // 문서를 여러 건 연속 생성하면 결과 화면엔 마지막 문서만 남으므로, 이 목록에서
+  // 이전 문서들을 각자 내려받을 수 있게 한다 (record.id가 있는 경우에만 — 구버전
+  // 레코드는 id가 없을 수 있어 그런 경우 다운로드 버튼을 뺀다).
+  function renderLedger(projectName) {
     if (state.projectRecords.length === 0) {
       $("ledger").innerHTML = `<div class="ledger-empty">이 현장의 기록이 없습니다. 새로 시작합니다.</div>`;
       return;
     }
-    $("ledger").innerHTML = state.projectRecords.map((r) => `
+    $("ledger").innerHTML = state.projectRecords.map((r, i) => `
       <div class="ledger-row">
         <span class="doc-badge">${escapeHtml(r.document_type)}</span>
         <div class="doc-info">
           <div class="doc-preview">${escapeHtml(r.project_info || "")}</div>
+          ${r.id ? `
+            <div class="ledger-actions">
+              <button class="btn-secondary ledger-dl" data-index="${i}" data-format="xlsx">엑셀</button>
+              <button class="btn-secondary ledger-dl" data-index="${i}" data-format="hwpx">한글</button>
+              <button class="btn-secondary ledger-dl" data-index="${i}" data-format="pdf">PDF</button>
+            </div>
+          ` : ""}
         </div>
         <span class="doc-time">${escapeHtml(r.created_at)}</span>
       </div>
     `).join("");
+
+    document.querySelectorAll(".ledger-dl").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const record = state.projectRecords[Number(btn.dataset.index)];
+        downloadRecord(projectName, record.id, record.document_type, btn.dataset.format, btn);
+      });
+    });
   }
 
   // ---- 3. 위험성평가 회차 목록 ----
@@ -752,7 +787,7 @@
             firstChunkReceived = true;
             $("generate-status").innerHTML = "";
             $("result-section").style.display = "block";
-            $("result-section").scrollIntoView({ behavior: "smooth", block: "start" });
+            scrollToSection($("result-section"));
           }
           accumulatedText += event.text;
           scheduleRender();
@@ -794,21 +829,26 @@
     $("error-box").style.display = "block";
   }
 
-  async function downloadXlsx() {
-    if (!state.lastRecordId || !state.lastProjectName) {
-      showError("현장명을 입력하고 생성해야 엑셀로 내려받을 수 있습니다.");
+  const EXPORT_FORMAT_LABELS = { xlsx: "엑셀", hwpx: "한글 파일", pdf: "PDF" };
+
+  // 현재 결과 화면뿐 아니라 "현장 기록" 목록의 과거 문서에서도 재사용된다 —
+  // 문서를 3건 연속 생성하면 화면엔 마지막 문서만 남으므로, 이전 문서를 내려받으려면
+  // record_id를 직접 넘겨 호출할 수 있어야 한다.
+  async function downloadRecord(projectName, recordId, docLabel, format, btn) {
+    if (!recordId || !projectName) {
+      showError(`현장명을 입력하고 생성해야 ${EXPORT_FORMAT_LABELS[format]}로 내려받을 수 있습니다.`);
       return;
     }
-    $("btn-download-xlsx").disabled = true;
+    if (btn) btn.disabled = true;
     try {
-      const path = `/projects/${encodeURIComponent(state.lastProjectName)}/records/${encodeURIComponent(state.lastRecordId)}/export.xlsx`;
+      const path = `/projects/${encodeURIComponent(projectName)}/records/${encodeURIComponent(recordId)}/export.${format}`;
       const res = await apiFetch(path);
-      if (!res.ok) throw new Error("엑셀 파일을 만들지 못했습니다.");
+      if (!res.ok) throw new Error(`${EXPORT_FORMAT_LABELS[format]} 파일을 만들지 못했습니다.`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${state.lastProjectName}_${state.lastDocLabel || "문서"}.xlsx`;
+      a.download = `${projectName}_${docLabel || "문서"}.${format}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -816,60 +856,20 @@
     } catch (e) {
       showError(e.message);
     } finally {
-      $("btn-download-xlsx").disabled = false;
+      if (btn) btn.disabled = false;
     }
   }
 
-  async function downloadHwpx() {
-    if (!state.lastRecordId || !state.lastProjectName) {
-      showError("현장명을 입력하고 생성해야 한글 파일로 내려받을 수 있습니다.");
-      return;
-    }
-    $("btn-download-hwpx").disabled = true;
-    try {
-      const path = `/projects/${encodeURIComponent(state.lastProjectName)}/records/${encodeURIComponent(state.lastRecordId)}/export.hwpx`;
-      const res = await apiFetch(path);
-      if (!res.ok) throw new Error("한글 파일을 만들지 못했습니다.");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${state.lastProjectName}_${state.lastDocLabel || "문서"}.hwpx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      showError(e.message);
-    } finally {
-      $("btn-download-hwpx").disabled = false;
-    }
+  function downloadXlsx() {
+    return downloadRecord(state.lastProjectName, state.lastRecordId, state.lastDocLabel, "xlsx", $("btn-download-xlsx"));
   }
 
-  async function downloadPdf() {
-    if (!state.lastRecordId || !state.lastProjectName) {
-      showError("현장명을 입력하고 생성해야 PDF로 내려받을 수 있습니다.");
-      return;
-    }
-    $("btn-download-pdf").disabled = true;
-    try {
-      const path = `/projects/${encodeURIComponent(state.lastProjectName)}/records/${encodeURIComponent(state.lastRecordId)}/export.pdf`;
-      const res = await apiFetch(path);
-      if (!res.ok) throw new Error("PDF 파일을 만들지 못했습니다.");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${state.lastProjectName}_${state.lastDocLabel || "문서"}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      showError(e.message);
-    } finally {
-      $("btn-download-pdf").disabled = false;
-    }
+  function downloadHwpx() {
+    return downloadRecord(state.lastProjectName, state.lastRecordId, state.lastDocLabel, "hwpx", $("btn-download-hwpx"));
+  }
+
+  function downloadPdf() {
+    return downloadRecord(state.lastProjectName, state.lastRecordId, state.lastDocLabel, "pdf", $("btn-download-pdf"));
   }
 
   // 텔레그램 인앱 WebView 등에서는 navigator.clipboard.writeText()가 권한/보안
@@ -958,7 +958,7 @@
     document.getElementById("btn-next-doc-cta").addEventListener("click", () => {
       cta.remove();
       selectDocumentType(nextType.id, nextType.label);
-      $("worktype-section").scrollIntoView({ behavior: "smooth", block: "start" });
+      scrollToSection($("worktype-section"));
     });
   }
 
