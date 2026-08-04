@@ -18,9 +18,11 @@ if hasattr(sys.stdout, "reconfigure"):
 import pypdf
 from reportlab.lib.pagesizes import A4, landscape, portrait
 
+from reportlab.platypus import Indenter, Table
 from export_pdf import (
-    _BODY_STYLE, _BOX_TITLE_STYLE, _build_table_element, _CELL_STYLE_CENTER, _CELL_STYLE_LEFT,
-    _center_x, _hex_color, _PAGE_MARGIN_PT, _PDF_HEADER_FILL, _TitleFlowable, record_to_pdf_bytes,
+    _BODY_STYLE, _BOX_TITLE_STYLE, _build_elements, _build_table_element, _CELL_STYLE_CENTER,
+    _CELL_STYLE_LEFT, _center_x, _CONTENT_INDENT_PT, _hex_color, _PAGE_MARGIN_PT, _PDF_HEADER_FILL,
+    _TitleFlowable, record_to_pdf_bytes,
 )
 from document_styles import STYLE_SPECS
 from markdown_tables import parse_markdown_blocks, parse_markdown_tables
@@ -247,6 +249,19 @@ def run():
     prose_text = "".join(page.extract_text() for page in prose_reader.pages)
     checks.append(("표가 아닌 서술형 섹션의 본문 내용이 PDF에 실제로 그려짐", "무전압 상태" in prose_text))
 
+    # --- 표는 명시적으로 좌측정렬(hAlign)됨, 박스 제목 아래 내용은 들여쓰기됨 ---
+    indent_blocks = parse_markdown_blocks(SAMPLE_RECORD_WITH_HEADING["draft"])
+    indent_elements = _build_elements(indent_blocks, SAMPLE_RECORD_WITH_HEADING["document_type"], frame_width)
+    indenters = [e for e in indent_elements if isinstance(e, Indenter)]
+    checks.append(("헤딩마다 Indenter(+)/Indenter(-) 쌍이 맞음", sum(i.left for i in indenters) == 0))
+    checks.append(("들여쓰기 폭만큼(+_CONTENT_INDENT_PT)이 걸림", any(i.left == _CONTENT_INDENT_PT for i in indenters)))
+    tables_in_elements = [e for e in indent_elements if isinstance(e, Table)]
+    checks.append((
+        "헤딩 아래 표의 열너비 합은 (frame_width - 들여쓰기)와 같음(들여쓰기만큼 좁아짐)",
+        all(abs(sum(t._colWidths) - (frame_width - _CONTENT_INDENT_PT)) < 1 for t in tables_in_elements),
+    ))
+    checks.append(("헤딩 아래 표는 hAlign='LEFT'", all(t.hAlign == "LEFT" for t in tables_in_elements)))
+
     # --- 참석자 명단(서명 필수) 표는 최소 10행 확보 + 손글씨 서명 가능한 행 높이 ---
     roster_record = {
         "document_type": "TBM 일지",
@@ -262,6 +277,7 @@ def run():
         roster_table_rows, frame_width, roster_record["document_type"], is_signature_table=True
     )
     checks.append(("참석자 명단 표는 헤더 제외 최소 10행으로 패딩됨", len(roster_flowable._cellvalues) - 1 >= 10))
+    checks.append(("_build_table_element이 만든 표는 hAlign='LEFT'", roster_flowable.hAlign == "LEFT"))
     checks.append((
         "참석자 명단 표의 데이터 행 높이가 서명 가능한 정도로 확대됨(>=24pt)",
         all(h >= 24 for h in roster_flowable._argH[1:]),

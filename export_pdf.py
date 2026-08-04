@@ -24,7 +24,7 @@ from reportlab.lib.pagesizes import A4, landscape, portrait
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Flowable, Indenter, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from document_styles import (
     AI_SCORE_FOOTNOTE, base_header, cell_style_decision, get_style,
@@ -81,6 +81,12 @@ _PDF_HEADER_FILL = "8DA1C5"
 
 # 기본(reportlab 기본값 72pt=1인치)이 너무 넓다는 피드백으로 4방 모두 축소.
 _PAGE_MARGIN_PT = 15
+
+# 박스 제목(헤딩) 바로 아래 표·본문을 이 폭만큼 들여써서, 제목에 속한
+# 내용이라는 게 시각적으로 드러나게 한다("모두 가운데정렬처럼 보인다" —
+# 들여쓰기 없이 제목과 본문이 같은 왼쪽 기준선에서 시작해 위계가 안
+# 드러나던 문제, 2026-08-04 피드백).
+_CONTENT_INDENT_PT = 14
 
 # "참석자 명단(서명 필수)" 같은 서명란 표는 LLM이 만들어주는 빈 행 개수가
 # 들쭉날쭉해 실사용에 부족한 경우가 있었다(2026-08-04 요청 — 최소 10명 분량
@@ -223,6 +229,17 @@ def _content_aware_col_widths(raw_rows, ncols, frame_width, font_size):
                 result[i] = floor + surplus / len(unsettled)
             else:
                 result[i] = floor + surplus * (extra_need[i] / total_extra_need)
+    elif remaining_budget > 0:
+        # 모든 열이 자연폭 안에서 넉넉히 들어간 경우(작은 표) — 남는 예산을
+        # 그냥 버리면 표가 frame_width를 다 못 채운다. 자연폭 비례로 전 열에
+        # 추가 배분해 항상 frame_width를 꽉 채우게 한다.
+        total_natural = sum(natural)
+        if total_natural > 0:
+            for i in range(ncols):
+                result[i] += remaining_budget * (natural[i] / total_natural)
+        else:
+            for i in range(ncols):
+                result[i] += remaining_budget / ncols
 
     return result
 
@@ -300,10 +317,55 @@ def _build_table_element(table, frame_width, document_type, is_signature_table=F
         row_heights = [None] + [_SIGNATURE_ROW_HEIGHT_PT] * (len(table) - 1)
 
     table_flowable = Table(
-        data, colWidths=col_widths, rowHeights=row_heights,
+        data, colWidths=col_widths, rowHeights=row_heights, hAlign="LEFT",
         style=TableStyle(table_style_commands), repeatRows=1,
     )
     return table_flowable, ai_value_present
+
+
+def _build_elements(blocks, document_type, doc_width):
+    """
+    parse_markdown_blocks()의 결과를 reportlab 플로어블 리스트로 바꾼다.
+    박스 제목(헤딩) 바로 다음에 오는 내용(표·본문)은 Indenter로
+    _CONTENT_INDENT_PT만큼 들여써서, 제목에 종속된 내용임이 시각적으로
+    드러나게 한다. 표에 실제로 배정되는 폭도 그만큼 줄어든다(안 그러면
+    표가 페이지 우측 여백을 넘어간다).
+    """
+    elements = [_TitleFlowable(document_type), Spacer(1, 12)]
+
+    if not blocks:
+        return elements
+
+    indent_open = False
+    last_heading_text = None
+    for block in blocks:
+        if block["type"] == "heading":
+            if indent_open:
+                elements.append(Indenter(left=-_CONTENT_INDENT_PT))
+            last_heading_text = block["text"]
+            elements.append(Paragraph(escape(block["text"]), _BOX_TITLE_STYLE))
+            elements.append(Indenter(left=_CONTENT_INDENT_PT))
+            indent_open = True
+        elif block["type"] == "text":
+            body_text = escape(block["text"]).replace("\n", "<br/>")
+            elements.append(Paragraph(body_text, _BODY_STYLE))
+            elements.append(Spacer(1, 8))
+        else:
+            effective_width = doc_width - (_CONTENT_INDENT_PT if indent_open else 0)
+            table_flowable, ai_value_present = _build_table_element(
+                block["rows"], effective_width, document_type,
+                is_signature_table=_is_signature_heading(last_heading_text),
+            )
+            elements.append(table_flowable)
+            if ai_value_present:
+                elements.append(Spacer(1, 4))
+                elements.append(Paragraph(AI_SCORE_FOOTNOTE, _FOOTNOTE_STYLE))
+            elements.append(Spacer(1, 12))
+
+    if indent_open:
+        elements.append(Indenter(left=-_CONTENT_INDENT_PT))
+
+    return elements
 
 
 def record_to_pdf_bytes(record):
@@ -325,30 +387,10 @@ def record_to_pdf_bytes(record):
         topMargin=_PAGE_MARGIN_PT, bottomMargin=_PAGE_MARGIN_PT,
         leftMargin=_PAGE_MARGIN_PT, rightMargin=_PAGE_MARGIN_PT,
     )
-    elements = [_TitleFlowable(document_type), Spacer(1, 12)]
 
+    elements = _build_elements(blocks, document_type, doc.width)
     if not blocks:
         elements.append(Paragraph(escape(record["draft"]).replace("\n", "<br/>"), _BODY_STYLE))
-    else:
-        last_heading_text = None
-        for block in blocks:
-            if block["type"] == "heading":
-                last_heading_text = block["text"]
-                elements.append(Paragraph(escape(block["text"]), _BOX_TITLE_STYLE))
-            elif block["type"] == "text":
-                body_text = escape(block["text"]).replace("\n", "<br/>")
-                elements.append(Paragraph(body_text, _BODY_STYLE))
-                elements.append(Spacer(1, 8))
-            else:
-                table_flowable, ai_value_present = _build_table_element(
-                    block["rows"], doc.width, document_type,
-                    is_signature_table=_is_signature_heading(last_heading_text),
-                )
-                elements.append(table_flowable)
-                if ai_value_present:
-                    elements.append(Spacer(1, 4))
-                    elements.append(Paragraph(AI_SCORE_FOOTNOTE, _FOOTNOTE_STYLE))
-                elements.append(Spacer(1, 12))
 
     doc.build(elements)
     return buffer.getvalue()
