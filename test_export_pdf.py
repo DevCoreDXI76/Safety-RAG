@@ -282,6 +282,18 @@ def run():
         "참석자 명단 표의 데이터 행 높이가 서명 가능한 정도로 확대됨(>=24pt)",
         all(h >= 24 for h in roster_flowable._argH[1:]),
     ))
+    # 실사용 조건(세로형 A4 + 여백 15pt + 박스 들여쓰기 14pt)의 좁은 폭에서도
+    # 서명란 열 폭이 한글 10자 이상 확보되는지 — 넉넉한 landscape 폭으로
+    # 테스트하면 우연히 통과해버려서(자연폭 비례 배분만으로도 넓어짐)
+    # 실제 좁은 폭을 명시적으로 재현한다.
+    narrow_signature_width = portrait(A4)[0] - 2 * _PAGE_MARGIN_PT - _CONTENT_INDENT_PT
+    narrow_roster_flowable, _ = _build_table_element(
+        roster_table_rows, narrow_signature_width, roster_record["document_type"], is_signature_table=True
+    )
+    checks.append((
+        "세로형 A4의 좁은 폭에서도 서명란 열 폭이 한글 10자 이상 확보됨",
+        all(w >= 10 * _CELL_STYLE_LEFT.fontSize for w in narrow_roster_flowable._colWidths),
+    ))
     checks.append((
         "일반 표(is_signature_table 기본값)는 패딩되지 않음",
         len(mixed_flowable._cellvalues) - 1 == 1,

@@ -271,7 +271,14 @@ def _build_table_element(table, frame_width, document_type, is_signature_table=F
     ncols = max(len(row) for row in table)
     style = get_style(document_type)
 
-    col_widths = _content_aware_col_widths(table, ncols, frame_width, _CELL_STYLE_LEFT.fontSize)
+    if is_signature_table:
+        # 서명란은 대부분 빈 칸이라 "자연폭"이 거의 0이다 — 내용 기반 배분에
+        # 맡기면 손글씨 쓸 공간이 안 나온다. 균등폭 + 한글 10자 이상 보장되는
+        # 최소폭 중 큰 쪽을 그대로 쓴다.
+        min_width = 10 * _CELL_STYLE_LEFT.fontSize
+        col_widths = [max(frame_width / ncols, min_width)] * ncols
+    else:
+        col_widths = _content_aware_col_widths(table, ncols, frame_width, _CELL_STYLE_LEFT.fontSize)
 
     is_kv_table = ncols == 2
     headers_base = [base_header(h) for h in table[0]]
