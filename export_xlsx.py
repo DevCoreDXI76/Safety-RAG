@@ -263,13 +263,22 @@ def _print_scale_percent(document_type, column_widths, max_col_count):
     return max(_PRINT_SCALE_MIN_PERCENT, min(scale, _PRINT_SCALE_MAX_PERCENT))
 
 
-def _apply_print_settings(ws, document_type, title_row=None, scale_percent=100):
+def _apply_print_settings(ws, document_type, scale_percent=100):
     """
     5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 여백.
     - 위험성평가표: 계산된 배율을 항상 명시(_EXPLICIT_SCALE_DOCUMENT_TYPES)
     - 표준 작업계획서·TBM 일지: 계산된 배율이 100%를 넘길 때만(확대) 명시,
       아니면 뷰어의 "폭에 맞춤" 자동 축소(_ENLARGE_ONLY_SCALE_DOCUMENT_TYPES)
     - 그 외: 항상 뷰어의 "폭에 맞춤" 자동 축소
+
+    print_title_rows(반복할 행)는 의도적으로 설정하지 않는다 — 이 시트는
+    표 여러 개와 서술형 문단이 섞여 있어서, 그중 한 표의 헤더 행을 "반복할
+    행"으로 지정하면 그 표의 데이터가 끝난 뒤 전혀 무관한 뒤쪽 섹션(예: TBM
+    일지 "3. 중점 위험요인")이 시작되는 페이지에도 그 표 헤더가 엉뚱하게
+    다시 찍혀 나온다(2026-08-05 7차 피드백 "중점위험 요인 다음에 잘못된
+    박스가 들어감" — 실제로는 잘못된 셀이 아니라 이 인쇄 반복행 기능이
+    원인이었음). 화면 스크롤용 틀고정(freeze_panes)은 이 문제와 무관해
+    그대로 유지한다.
     """
     ws.page_setup.orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
     ws.page_setup.paperSize = _PAPER_SIZE_A4
@@ -290,8 +299,6 @@ def _apply_print_settings(ws, document_type, title_row=None, scale_percent=100):
     ws.page_margins.bottom = _PRINT_MARGIN_IN
     ws.page_margins.header = _PRINT_HEADER_FOOTER_MARGIN_IN
     ws.page_margins.footer = _PRINT_HEADER_FOOTER_MARGIN_IN
-    if title_row is not None:
-        ws.print_title_rows = f"{title_row}:{title_row}"
 
 
 def record_to_xlsx_bytes(record):
@@ -512,11 +519,7 @@ def record_to_xlsx_bytes(record):
             )
 
     scale_percent = _print_scale_percent(document_type, column_widths, max_col_count)
-    _apply_print_settings(
-        ws, document_type,
-        title_row=(freeze_row - 1) if freeze_row is not None else None,
-        scale_percent=scale_percent,
-    )
+    _apply_print_settings(ws, document_type, scale_percent=scale_percent)
 
     buffer = io.BytesIO()
     wb.save(buffer)

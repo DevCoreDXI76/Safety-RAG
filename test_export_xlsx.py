@@ -566,6 +566,15 @@ def run():
         ws_prose.sheet_properties.pageSetUpPr.fitToPage is True and ws_prose.page_setup.fitToWidth == 1
     )))
 
+    # --- 2026-08-05 7차 피드백: "중점위험 요인 다음에 잘못된 박스가 들어감"
+    # — 원인은 print_title_rows(인쇄 시 반복할 행)가 "핵심 위험요인" 표의
+    # 헤더 행을 가리키고 있어서, 그 표와 무관한 뒤쪽 섹션(3. 중점 위험요인)이
+    # 시작되는 페이지에도 그 표 헤더가 다시 찍혀 나온 것이었다 — 표 여러 개와
+    # 서술형 문단이 섞인 시트에서는 반복 행을 아예 쓰지 않아야 한다.
+    results.append(("print_title_rows(인쇄 반복 행)는 더 이상 설정하지 않음(TBM 일지)", ws_prose.print_title_rows is None))
+    results.append(("print_title_rows는 위험성평가표에서도 설정 안 됨", ws.print_title_rows is None))
+    results.append(("print_title_rows는 표준 작업계획서에서도 설정 안 됨", ws_freeze_wp.print_title_rows is None))
+
     # 표준 작업계획서는 여전히 "열이 적어 확대 필요"(2·3차 피드백 이후 문제
     # 제기 없음) 케이스를 유지한다 — ws_freeze_wp(2열)로 검증.
     wp_freeze_scale = _print_scale_percent("표준 작업계획서", STYLE_SPECS["표준 작업계획서"].column_widths, 2)
