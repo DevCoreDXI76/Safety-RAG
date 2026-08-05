@@ -181,12 +181,6 @@ def record_to_hwpx_bytes(record):
     # TBM 일지는 서술형 문단 + 좁은 표 위주라 세로형이 더 자연스럽다
     # (PDF/XLSX와 동일 — document_styles.PORTRAIT_DOCUMENT_TYPES 공유).
     orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
-    # TEMP DEBUG(2026-08-06): 세로형 미적용 리포트 원인 조사용 — 제거할 것.
-    print(
-        f"[HWPX_DEBUG] document_type={document_type!r} "
-        f"PORTRAIT_DOCUMENT_TYPES={PORTRAIT_DOCUMENT_TYPES!r} orientation={orientation!r}",
-        flush=True,
-    )
 
     doc = HwpxDocument.new()
     doc.set_page_setup(
