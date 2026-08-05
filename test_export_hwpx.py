@@ -106,6 +106,49 @@ SAMPLE_RECORD_RISK_WIDE_NARROW = {
     ),
 }
 
+# 실제 서식목업 스펙(document_styles.py STYLE_SPECS["위험성평가표"].column_widths,
+# 13열)을 그대로 재현한다 — 2026-08-05 실기기 검증에서 "빈도"·"강도"·"위험등급"처럼
+# 헤더가 2~4글자인 좁은 열이 세로로 한 글자씩 찌그러져 보이는 문제가 발견됨
+# (3열짜리 SAMPLE_RECORD_RISK_WIDE_NARROW로는 재현이 안 됐던 실사용 규모 회귀).
+SAMPLE_RECORD_RISK_REAL_SPEC = {
+    "document_type": "위험성평가표",
+    "draft": (
+        "| 단위작업 | 유해위험요인 | 관련근거(법적기준) | 현재 안전조치 | 빈도 | 강도 | 위험등급 | "
+        "위험성 감소대책 | 개선후 위험등급 | 개선예정일 | 대책이행여부 및 확인일 | 재평가 필요여부 | 비고 |\n"
+        "|------|------|------|------|------|------|------|------|------|------|------|------|------|\n"
+        "| 배전반 반입·설치 | 배전반 중량물 취급 중 협착·전도 | 산업안전보건기준에 관한 규칙 제38조 | 없음 | "
+        "2 | 3 | B | 신호수 배치, 작업반경 내 접근금지 표지 설치 | C | (빈칸 - 현장 기재) | "
+        "(빈칸 - 현장 기재) | 유 | - |\n"
+    ),
+}
+
+# PDF(6c8cb5a)/XLSX(63590a2)와 동일하게 "위험성 추정 행렬" 참고표처럼 헤더가
+# "위험등급"이 아니어도(1(낮음)/2(보통)/3(높음)) 셀 값 자체가 등급 문자(A/B/C)면
+# 같은 색을 칠해야 한다.
+SAMPLE_RECORD_RISK_MATRIX = {
+    "document_type": "위험성평가표",
+    "draft": (
+        "| 빈도\\강도 | 1(낮음) | 2(보통) | 3(높음) |\n"
+        "|------|------|------|------|\n"
+        "| 1(낮음) | C | C | B |\n"
+        "| 2(보통) | C | B | A |\n"
+        "| 3(높음) | B | A | A |\n"
+    ),
+}
+
+# PDF(aaf80a9)와 동일하게 "결재란"·"서명"·"참여 확인" 박스 제목 바로 아래 표는
+# 내용 길이와 무관하게 열을 균등폭으로 나눠야 한다 — 콘텐츠 기반 폭에 맡기면
+# "(빈칸)"류 빈 셀이 대부분이라 폭이 거의 안 나온다.
+SAMPLE_RECORD_SIGNOFF = {
+    "document_type": "TBM 일지",
+    "draft": (
+        "## 결재란\n\n"
+        "| 담당자 작성 | 검토자 검토 | 근로자대표 확인 | 안전보건관리책임자(승인) |\n"
+        "|------|------|------|------|\n"
+        "| (빈칸) | (빈칸) | (빈칸) | (빈칸) |\n"
+    ),
+}
+
 
 def run():
     print("=== export_hwpx.py 스모크 테스트 ===\n")
@@ -193,6 +236,72 @@ def run():
         "빈도(짧은 값) 열이 서술형 설명 열보다 훨씬 좁음 (콘텐츠 기반 폭)",
         len(widths) == 3 and widths[2] > widths[1] * 3,
     ))
+
+    # --- 실제 13열 스펙 재현: 좁은 헤더 열이 찌그러지지 않는지 검증 ---
+    hwpx_bytes_real = record_to_hwpx_bytes(SAMPLE_RECORD_RISK_REAL_SPEC)
+    widths_real = _row0_cell_widths(hwpx_bytes_real)
+    # export_hwpx._MIN_COL_WIDTH_UNITS 미만으로 찌그러지는 열이 없어야 한다
+    # ("빈도"·"강도"·"위험등급"처럼 헤더가 2~4글자인 좁은 열이 옆의 긴 서술형
+    # 열 때문에 세로로 한 글자씩 줄바꿈되던 문제, 2026-08-05 실기기 발견).
+    from export_hwpx import _MIN_COL_WIDTH_UNITS
+    checks.append((
+        "13열 실스펙에서도 모든 열이 최소폭 이상 확보됨(헤더 세로찌그러짐 방지)",
+        len(widths_real) == 13 and min(widths_real) >= _MIN_COL_WIDTH_UNITS,
+    ))
+
+    # --- 위험성 추정 행렬(헤더명 무관 A/B/C) 등급색 검증 ---
+    hwpx_bytes_matrix = record_to_hwpx_bytes(SAMPLE_RECORD_RISK_MATRIX)
+    with zipfile.ZipFile(io.BytesIO(hwpx_bytes_matrix)) as zf:
+        header_xml_matrix = zf.read("Contents/header.xml").decode("utf-8", errors="ignore")
+    checks.append((
+        "위험성 추정 행렬(헤더명 무관) A등급 셀도 배경색 기록됨",
+        risk_style.risk_grade_colors["A"] in header_xml_matrix.upper(),
+    ))
+    checks.append((
+        "위험성 추정 행렬(헤더명 무관) B등급 셀도 배경색 기록됨",
+        risk_style.risk_grade_colors["B"] in header_xml_matrix.upper(),
+    ))
+
+    # --- 결재란 균등폭 검증 ---
+    hwpx_bytes_signoff = record_to_hwpx_bytes(SAMPLE_RECORD_SIGNOFF)
+    widths_signoff = _row0_cell_widths(hwpx_bytes_signoff)
+    checks.append((
+        "결재란은 내용 길이와 무관하게 4열이 균등폭",
+        len(widths_signoff) == 4 and max(widths_signoff) - min(widths_signoff) <= 2,
+    ))
+
+    # --- 문서 제목 스타일(28pt·밑줄·굵게) 검증 ---
+    with zipfile.ZipFile(io.BytesIO(hwpx_bytes)) as zf:
+        header_xml_title = zf.read("Contents/header.xml").decode("utf-8", errors="ignore")
+    checks.append((
+        "문서 제목 charPr가 28pt(height=2800)로 기록됨",
+        'height="2800"' in header_xml_title,
+    ))
+    checks.append((
+        "문서 제목 charPr에 굵게(bold)가 기록됨",
+        '<hh:bold' in header_xml_title.split('height="2800"')[1].split("</hh:charPr>")[0]
+        if 'height="2800"' in header_xml_title else False,
+    ))
+    checks.append((
+        "문서 제목 charPr에 밑줄(underline SOLID)이 기록됨",
+        'height="2800"' in header_xml_title
+        and 'underline type="SOLID"' in header_xml_title.split('height="2800"')[1].split("</hh:charPr>")[0],
+    ))
+
+    # --- 페이지 방향 분기 검증 ---
+    with zipfile.ZipFile(io.BytesIO(record_to_hwpx_bytes(SAMPLE_RECORD))) as zf:
+        risk_section_xml = zf.read("Contents/section0.xml").decode("utf-8", errors="ignore")
+    checks.append(("위험성평가표는 가로형(WIDELY) 유지", 'landscape="WIDELY"' in risk_section_xml))
+
+    workplan_record = {"document_type": "표준 작업계획서", "draft": SAMPLE_RECORD_RISK_WIDE_NARROW["draft"]}
+    with zipfile.ZipFile(io.BytesIO(record_to_hwpx_bytes(workplan_record))) as zf:
+        workplan_section_xml = zf.read("Contents/section0.xml").decode("utf-8", errors="ignore")
+    checks.append(("표준 작업계획서는 세로형(PORTRAIT)으로 전환됨", 'landscape="PORTRAIT"' in workplan_section_xml))
+
+    tbm_record = {"document_type": "TBM 일지", "draft": SAMPLE_RECORD_RISK_WIDE_NARROW["draft"]}
+    with zipfile.ZipFile(io.BytesIO(record_to_hwpx_bytes(tbm_record))) as zf:
+        tbm_section_xml = zf.read("Contents/section0.xml").decode("utf-8", errors="ignore")
+    checks.append(("TBM 일지는 세로형(PORTRAIT)으로 전환됨", 'landscape="PORTRAIT"' in tbm_section_xml))
 
     print()
     all_ok = True
