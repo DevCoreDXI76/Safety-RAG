@@ -4,8 +4,21 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from openpyxl import load_workbook
+from openpyxl.cell.rich_text import CellRichText
 from document_styles import AI_SCORE_FOOTNOTE, STYLE_SPECS
 from export_xlsx import _print_scale_percent, record_to_xlsx_bytes
+
+
+def _placeholder_run_present(rich_value):
+    """rich_value(CellRichText) 안에 '빈칸'을 포함하면서 999999(연회색)로
+    칠해진 run이 있는지 확인한다."""
+    if not isinstance(rich_value, CellRichText):
+        return False
+    for block in rich_value:
+        rgb = getattr(getattr(block.font, "color", None), "rgb", "") or ""
+        if "빈칸" in block.text and rgb.upper().endswith("999999"):
+            return True
+    return False
 
 SAMPLE_RECORD = {
     "id": "abc123",
@@ -172,6 +185,23 @@ SAMPLE_RECORD_ROW_HEIGHT_SAFETY = {
     "document_type": "TBM 일지",
     "project_info": "행 높이 안전마진 검증용",
     "draft": "| 항목 | 내용 |\n|------|------|\n| 테스트 | " + "가" * 19 + " |\n",
+    "created_at": "2026-08-05 10:00:00",
+}
+
+# 2026-08-05 3차 피드백: "(빈칸 - 현장 기재)" 같은 안내문은 실제 값이 아니므로
+# 연한 회색으로 구분 표시 — 표 셀(전체가 플레이스홀더/일부만 플레이스홀더 둘 다),
+# 헤딩, 서술형 텍스트 블록 모두에서 확인한다.
+SAMPLE_RECORD_PLACEHOLDER = {
+    "id": "placeholder1",
+    "document_type": "TBM 일지",
+    "project_info": "플레이스홀더 회색 처리 검증용",
+    "draft": (
+        "| 항목 | 내용 |\n|------|------|\n"
+        "| 작업일자 | (빈칸 - 현장 기재) |\n"
+        "| 작성자 | 김철수, (빈칸 - 현장 기재) |\n\n"
+        "## ■ 비고\n\n"
+        "특이사항 없음. 서명: (빈칸 - 현장 기재)\n"
+    ),
     "created_at": "2026-08-05 10:00:00",
 }
 
@@ -448,26 +478,59 @@ def run():
         )
         results.append((f"{name_label}: 인쇄 여백이 상하좌우 25px(≈0.26인치)로 축소됨", margin_ok))
 
-    # --- 2026-08-05 2차 피드백 2: TBM 일지처럼 정적 스펙 열너비 합이 A4
-    # 인쇄 가능폭보다 훨씬 좁은 문서유형은 우측 여백이 과하게 남지 않도록
-    # 인쇄 배율을 키운다(내용을 넓히는 게 아니라 인쇄 시 확대) ---
+    # --- 2026-08-05 3차 피드백: fitToWidth 자동 맞춤을 뷰어가 지키지 않아
+    # 인쇄 미리보기에서 내용이 잘리는 게 실제로 확인됨 — 이제는 항상 명시적
+    # 배율을 계산해서 적용하고(fitToPage는 항상 꺼짐), 그 배율은
+    # _print_scale_percent가 실제로 계산한 값과 정확히 일치해야 한다
+    # (안전마진을 반영해 100%를 넘겨 확대하지는 않는다 — 2차 수정 때 TBM
+    # 일지를 124%로 확대했다가 실제 인쇄에서 오히려 넘쳐 잘렸던 회귀 방지).
+    # SAMPLE_RECORD_WITH_HEADING_AND_PROSE(ws_prose)의 표 중 가장 열이 많은
+    # 것은 3열("핵심 위험요인" 표) — 실제 record_to_xlsx_bytes 내부에서 쓰는
+    # max_col_count와 동일하게 맞춰야 계산값이 일치한다.
+    tbm_widths = STYLE_SPECS["TBM 일지"].column_widths
+    expected_tbm_scale = _print_scale_percent("TBM 일지", tbm_widths, 3)
+    results.append(("TBM 일지는 배율을 직접 지정하므로 fitToPage(자동 폭맞춤)는 꺼짐", ws_prose.sheet_properties.pageSetUpPr.fitToPage is not True))
+    results.append(("TBM 일지에 적용된 배율이 _print_scale_percent 계산값과 일치", ws_prose.page_setup.scale == expected_tbm_scale))
+
+    # 위험성평가표(실제 13열 스펙)도 이제 fitToWidth가 아니라 명시적 배율을 쓴다 —
+    # 열이 많아 폭이 넉넉하므로 배율은 100% 이하로 계산되어야 한다.
+    risk_full_widths = STYLE_SPECS["위험성평가표"].column_widths
+    risk_full_scale = _print_scale_percent("위험성평가표", risk_full_widths, len(risk_full_widths))
+    results.append(("위험성평가표(실제 13열 스펙)는 배율이 100% 이하로 계산됨", risk_full_scale <= 100))
+    results.append(("계산된 배율은 최소/최대 한도 안에 있음(50~115)", 50 <= risk_full_scale <= 115 and 50 <= expected_tbm_scale <= 115))
+
+    # --- 2026-08-05 3차 피드백: "(빈칸 - 현장 기재)" 안내문 회색 처리 ---
+    xlsx_bytes_ph = record_to_xlsx_bytes(SAMPLE_RECORD_PLACEHOLDER)
+    ws_ph_plain = load_workbook(io.BytesIO(xlsx_bytes_ph)).active
+    ws_ph_rich = load_workbook(io.BytesIO(xlsx_bytes_ph), rich_text=True).active
+    # 1행=제목, 2행=표헤더, 3행="작업일자|(빈칸...)", 4행="작성자|김철수, (빈칸...)",
+    # 5행=빈행, 6행=헤딩("■ 비고"), 7행=서술형 텍스트("...서명: (빈칸...)")
     results.append((
-        "TBM 일지는 인쇄 시 100% 초과로 확대되어 우측 여백을 채움",
-        ws_prose.page_setup.scale is not None and ws_prose.page_setup.scale > 100,
+        "전체가 플레이스홀더인 셀도 원문 텍스트 값 자체는 그대로 보존됨",
+        ws_ph_plain.cell(row=3, column=3).value == "(빈칸 - 현장 기재)",
     ))
     results.append((
-        "TBM 일지는 배율을 직접 지정하므로 fitToPage(자동 폭맞춤)는 꺼짐",
-        ws_prose.sheet_properties.pageSetUpPr.fitToPage is not True,
+        "전체가 플레이스홀더인 셀은 rich text로 회색 처리됨",
+        _placeholder_run_present(ws_ph_rich.cell(row=3, column=3).value),
     ))
-    # 위험성평가표는 실제로 열이 많은 문서(최대 13열)라, 그 정적 스펙 그대로
-    # 폭을 합하면 이미 A4 인쇄가능 폭에 가깝거나 넘는다 — 이런 경우는 배율을
-    # 강제로 키우지 않고 기존 fitToWidth=1 자동 맞춤을 그대로 써야 한다
-    # (_print_scale_percent를 직접 호출해 실제 13열 스펙 기준으로 검증 —
-    # ws는 테스트용 3열짜리라 이 불변식을 대표하지 못함).
-    risk_full_scale = _print_scale_percent(
-        "위험성평가표", STYLE_SPECS["위험성평가표"].column_widths, len(STYLE_SPECS["위험성평가표"].column_widths)
-    )
-    results.append(("위험성평가표(실제 13열 스펙)는 배율 확대를 적용하지 않음(None)", risk_full_scale is None))
+    embedded_rich = ws_ph_rich.cell(row=4, column=3).value
+    results.append(("일부만 플레이스홀더인 셀도 그 부분만 회색 처리됨", _placeholder_run_present(embedded_rich)))
+    results.append((
+        "일부만 플레이스홀더인 셀은 앞부분(실제 값)은 일반 색 그대로 유지됨",
+        isinstance(embedded_rich, CellRichText) and any(
+            "김철수" in b.text and not (getattr(getattr(b.font, "color", None), "rgb", "") or "").upper().endswith("999999")
+            for b in embedded_rich
+        ),
+    ))
+    results.append((
+        "플레이스홀더 없는 박스 제목은 평범한 문자열 그대로 유지됨(불필요한 rich text 안 씀)",
+        ws_ph_plain.cell(row=6, column=2).value == "■ 비고"
+        and not isinstance(ws_ph_plain.cell(row=6, column=2).value, CellRichText),
+    ))
+    results.append((
+        "서술형 텍스트 블록 안의 플레이스홀더도 회색 처리됨",
+        _placeholder_run_present(ws_ph_rich.cell(row=7, column=2).value),
+    ))
 
     all_ok = True
     for name, ok in results:

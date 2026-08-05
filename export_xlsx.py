@@ -13,6 +13,8 @@ import re
 import unicodedata
 
 from openpyxl import Workbook
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -119,6 +121,34 @@ def _fill(hex_color):
     return PatternFill(start_color=hex_color, end_color=hex_color, fill_type="solid")
 
 
+# "(빈칸 - 현장 기재)"류 안내문은 실제 데이터가 아니라 현장에서 채워야 할
+# 자리표시자이므로, PDF(export_pdf.py의 _PLACEHOLDER_RE)와 동일하게 연한
+# 회색으로 구분해 표시한다(2026-08-05 3차 피드백 "모든 엑셀문서에 동일하게
+# 적용해줘").
+_PLACEHOLDER_RE = re.compile(r"\([^()]*빈칸[^()]*\)")
+_PLACEHOLDER_COLOR = "999999"
+
+
+def _placeholder_rich_text(text, font):
+    """
+    text 안의 "(빈칸 - 현장 기재)"류 문구만 연한 회색으로 강조한 rich text를
+    만든다. 나머지 구간은 font(이미 그 셀에 적용된 폰트)를 그대로 유지한다.
+    """
+    base_color = font.color.rgb if font.color else "FF000000"
+    normal_run = InlineFont(sz=font.size, b=font.bold, color=base_color)
+    gray_run = InlineFont(sz=font.size, b=font.bold, color=_PLACEHOLDER_COLOR)
+    blocks = []
+    last_end = 0
+    for m in _PLACEHOLDER_RE.finditer(text):
+        if m.start() > last_end:
+            blocks.append(TextBlock(normal_run, text[last_end:m.start()]))
+        blocks.append(TextBlock(gray_run, m.group(0)))
+        last_end = m.end()
+    if last_end < len(text):
+        blocks.append(TextBlock(normal_run, text[last_end:]))
+    return CellRichText(*blocks)
+
+
 def _sheet_title(document_type):
     """엑셀 시트명 제약(31자 이내, : \\ / ? * [ ] 금지)을 만족하도록 정리한다."""
     cleaned = _INVALID_SHEET_CHARS_RE.sub("", document_type)
@@ -143,51 +173,54 @@ _FREEZE_AFTER_FIRST_TABLE_DOCUMENT_TYPES = {"표준 작업계획서"}
 _PRINT_MARGIN_IN = 25 / 96
 _PRINT_HEADER_FOOTER_MARGIN_IN = 0.2
 
-# 인쇄 배율(우측 여백 과다 보정, 2026-08-05 2차 피드백)에 쓰는 A4 가로폭(인치)과
-# 열너비 단위→픽셀 환산 근사치. openpyxl은 이 변환을 제공하지 않아 통합문서
-# 기본폰트(Calibri 11pt) 기준의 관용적 근사식(문자당 7px + 셀 여백/테두리 5px)을
-# 그대로 쓴다 — 정확한 1:1 변환은 아니지만 "얼마나 남는지" 판단에는 충분하다.
+# 인쇄 배율 계산에 쓰는 A4 가로폭(인치)과 열너비 단위→픽셀 환산 근사치.
+# openpyxl은 이 변환을 제공하지 않아 통합문서 기본폰트(Calibri 11pt) 기준의
+# 관용적 근사식(문자당 7px + 셀 여백/테두리 5px)을 그대로 쓴다 — 정확한 1:1
+# 변환은 아니지만 "얼마나 남는지/넘치는지" 판단에는 충분하다.
 _A4_WIDTH_IN = {"portrait": 8.27, "landscape": 11.69}
 _EXCEL_COL_WIDTH_PX_SLOPE = 7
 _EXCEL_COL_WIDTH_PX_INTERCEPT = 5
-_PRINT_SCALE_MAX_PERCENT = 150
+_PRINT_SCALE_MAX_PERCENT = 115
+_PRINT_SCALE_MIN_PERCENT = 50
+# 반올림/렌더링 오차로 실제 폭이 계산값보다 살짝 더 넓어도 페이지를 넘기지
+# 않도록, 계산값을 항상 내림(floor)한 뒤 추가로 몇 %p 더 줄여서 적용한다.
+_PRINT_SCALE_SAFETY_BUFFER_PERCENT = 3
 
 
 def _print_scale_percent(document_type, column_widths, max_col_count):
     """
-    표 전체 폭이 A4 인쇄가능 폭보다 훨씬 좁은 문서(예: 정적 스펙 열너비를 쓰는
-    TBM 일지)는 fitToWidth=1을 써도 Excel이 자동으로 확대해주지 않아(Excel의
-    "폭 맞춤"은 줄이기만 하고 늘리지는 않음) 우측에 여백이 크게 남는다
-    (2026-08-05 2차 피드백). 필요한 배율을 직접 계산해 100%를 넘길 때만
-    적용하고, 이미 페이지 폭에 가깝거나 넘치는 문서(예: 위험성평가표)는
-    기존 fitToWidth 자동 맞춤을 그대로 쓴다(None 반환).
+    엑셀의 "폭에 맞춤"(fitToWidth=1) 자동 축소는 실제 뷰어(한셀 등)에서
+    지켜지지 않아 표 내용이 페이지 폭을 넘겨 잘리거나, 초과분이 빈 페이지로
+    밀려나는 문제가 실사용 인쇄 미리보기에서 확인됐다(2026-08-05 3차 피드백).
+    그래서 뷰어의 자동 맞춤을 신뢰하지 않고, 필요한 인쇄 배율을 항상 직접
+    계산해서 명시적으로 지정한다 — 행 높이 계산과 같은 안전마진
+    (_WIDTH_ESTIMATE_SAFETY_FACTOR)을 폭 추정에도 일관되게 적용해, 실제
+    렌더링 폭을 과소평가해 배율을 과도하게 키우는 일(그 결과 오히려 넘치는
+    회귀, 2차 수정 때 TBM 일지에서 실제로 발생)이 없도록 한다.
     """
     total_units = _COL_A_WIDTH + sum(column_widths[:max_col_count])
     if total_units <= 0:
-        return None
-    content_px = total_units * _EXCEL_COL_WIDTH_PX_SLOPE + _EXCEL_COL_WIDTH_PX_INTERCEPT
+        return 100
+    content_px = (
+        total_units * _EXCEL_COL_WIDTH_PX_SLOPE + _EXCEL_COL_WIDTH_PX_INTERCEPT
+    ) * _WIDTH_ESTIMATE_SAFETY_FACTOR
     orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
     usable_in = _A4_WIDTH_IN[orientation] - 2 * _PRINT_MARGIN_IN
     usable_px = usable_in * 96
-    scale = usable_px / content_px * 100
-    if scale <= 100:
-        return None
-    return min(round(scale), _PRINT_SCALE_MAX_PERCENT)
+    scale = math.floor(usable_px / content_px * 100) - _PRINT_SCALE_SAFETY_BUFFER_PERCENT
+    return max(_PRINT_SCALE_MIN_PERCENT, min(scale, _PRINT_SCALE_MAX_PERCENT))
 
 
-def _apply_print_settings(ws, document_type, title_row=None, scale_percent=None):
-    """5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 배율/폭맞춤, 여백."""
+def _apply_print_settings(ws, document_type, title_row=None, scale_percent=100):
+    """
+    5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 여백. 배율은 항상 명시적
+    수치로 지정한다(fitToWidth 자동 맞춤은 뷰어별로 신뢰할 수 없음이 실사용
+    인쇄 미리보기에서 확인됨 — 2026-08-05 3차 피드백).
+    """
     ws.page_setup.orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
     ws.page_setup.paperSize = _PAPER_SIZE_A4
-    if scale_percent:
-        # 배율을 직접 지정할 때는 fitToPage를 꺼야 Excel이 그 배율을 그대로 쓴다
-        # (fitToPage가 켜져 있으면 scale을 무시하고 fitToWidth/fitToHeight로 재계산함).
-        ws.sheet_properties.pageSetUpPr.fitToPage = False
-        ws.page_setup.scale = scale_percent
-    else:
-        ws.page_setup.fitToWidth = 1
-        ws.page_setup.fitToHeight = 0
-        ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.sheet_properties.pageSetUpPr.fitToPage = False
+    ws.page_setup.scale = scale_percent
     ws.page_margins.left = _PRINT_MARGIN_IN
     ws.page_margins.right = _PRINT_MARGIN_IN
     ws.page_margins.top = _PRINT_MARGIN_IN
@@ -264,6 +297,8 @@ def record_to_xlsx_bytes(record):
             title_cell = ws.cell(row=current_row, column=1 + _COL_OFFSET, value=block["text"])
             title_cell.font = _BOX_TITLE_FONT
             title_cell.alignment = _ALIGN_TITLE
+            if _PLACEHOLDER_RE.search(block["text"]):
+                title_cell.value = _placeholder_rich_text(block["text"], title_cell.font)
             if max_col_count > 1:
                 ws.merge_cells(
                     start_row=current_row, start_column=1 + _COL_OFFSET,
@@ -277,6 +312,8 @@ def record_to_xlsx_bytes(record):
             text_cell = ws.cell(row=current_row, column=1 + _COL_OFFSET, value=block["text"])
             text_cell.font = _BODY_FONT
             text_cell.alignment = _ALIGN_LEFT_TOP
+            if _PLACEHOLDER_RE.search(block["text"]):
+                text_cell.value = _placeholder_rich_text(block["text"], text_cell.font)
             if max_col_count > 1:
                 ws.merge_cells(
                     start_row=current_row, start_column=1 + _COL_OFFSET,
@@ -347,6 +384,9 @@ def record_to_xlsx_bytes(record):
                         if grade in risk_fills:
                             cell.fill = risk_fills[grade]
                             cell.alignment = _ALIGN_CENTER
+
+                if isinstance(display_value, str) and _PLACEHOLDER_RE.search(display_value):
+                    cell.value = _placeholder_rich_text(display_value, cell.font)
 
             if is_kv_table and max_col_count > 2:
                 ws.merge_cells(
