@@ -138,6 +138,12 @@ def export_record_hwpx(project_name: str, record_id: str, telegram_user: dict = 
     if record is None:
         raise HTTPException(status_code=404, detail="지정한 기록을 찾을 수 없습니다.")
 
+    # TEMP DEBUG(2026-08-06): 표준 작업계획서/TBM 일지가 세로형(portrait)으로
+    # 안 바뀐다는 실기기 리포트 원인 조사용 — document_type 저장값에 공백/
+    # 대소문자 등 눈에 안 보이는 차이가 있는지 확인 후 제거할 것.
+    print(f"[HWPX_DEBUG] record_id={record_id} document_type={record.get('document_type')!r} "
+          f"work_type={record.get('work_type')!r}", flush=True)
+
     hwpx_bytes = record_to_hwpx_bytes(record)
     filename = f"{project_name}_{record['document_type']}.hwpx"
     return Response(
