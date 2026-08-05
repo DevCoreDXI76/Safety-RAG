@@ -5,7 +5,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from openpyxl import load_workbook
 from document_styles import AI_SCORE_FOOTNOTE, STYLE_SPECS
-from export_xlsx import record_to_xlsx_bytes
+from export_xlsx import _print_scale_percent, record_to_xlsx_bytes
 
 SAMPLE_RECORD = {
     "id": "abc123",
@@ -158,6 +158,20 @@ SAMPLE_RECORD_FREEZE_WORKPLAN = {
         "## ■ 작업 개요\n\n| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남 |\n| 공종 | 전기 |\n\n"
         "## ■ 사전조사 결과\n\n| 항목 | 내용 |\n|------|------|\n| 확인사항 | 없음 |\n"
     ),
+    "created_at": "2026-08-05 10:00:00",
+}
+
+# 2026-08-05 2차 피드백: "박스 안 텍스트가 셀 크기 때문에 잘려서 안 보이는 게
+# 없도록" — 열너비 단위(통합문서 기본폰트 Calibri 11pt 기준)와 실제 본문
+# 폰트(12pt, 한글은 맑은 고딕 등으로 자동 치환되어 더 넓음) 사이의 폭 추정
+# 오차 때문에 병합셀 행높이가 실제보다 낮게 계산되는 경우를 검증한다.
+# "내용" 열 폭(TBM 일지 스펙 2번째 값=22단위) 기준, 안전마진 적용 전에는
+# 2줄로 계산되지만 적용 후에는 3줄로 계산되어야 하는 경계값(한글 19자=38단위).
+SAMPLE_RECORD_ROW_HEIGHT_SAFETY = {
+    "id": "rowheight_safety1",
+    "document_type": "TBM 일지",
+    "project_info": "행 높이 안전마진 검증용",
+    "draft": "| 항목 | 내용 |\n|------|------|\n| 테스트 | " + "가" * 19 + " |\n",
     "created_at": "2026-08-05 10:00:00",
 }
 
@@ -411,6 +425,49 @@ def run():
     ws_wt = load_workbook(io.BytesIO(xlsx_bytes_wt)).active
     results.append(("work_type이 있으면 문서 제목에 괄호로 덧붙음", ws_wt.cell(row=1, column=2).value == "표준 작업계획서 (전기작업)"))
     results.append(("work_type이 없는 기존 표준 작업계획서는 제목이 그대로 유지됨", ws_freeze_wp.cell(row=1, column=2).value == "표준 작업계획서"))
+
+    # --- 2026-08-05 2차 피드백 1: 셀 크기 때문에 텍스트가 잘리는 문제 —
+    # 열너비 단위 추정과 실제 렌더링 폭 사이의 오차에 안전마진을 적용해
+    # 행 높이를 더 넉넉하게 계산해야 한다. "내용" 열(TBM 스펙 22단위)에
+    # 한글 19자(38단위)를 넣으면, 안전마진 적용 전엔 2줄(ceil(38/22)=2)로
+    # 계산되지만 적용 후엔 3줄(ceil(38*1.25/22)=3)로 계산되어야 한다 —
+    # 2줄 높이(구 상수 기준 2*15+5=35)보다 확실히 큰 45pt를 기준으로 확인.
+    xlsx_bytes_rowsafety = record_to_xlsx_bytes(SAMPLE_RECORD_ROW_HEIGHT_SAFETY)
+    ws_rowsafety = load_workbook(io.BytesIO(xlsx_bytes_rowsafety)).active
+    # 1행=제목, 2행=표헤더, 3행=데이터("테스트"/한글19자)
+    results.append((
+        "안전마진 적용으로 행 높이가 2줄 계산치보다 넉넉하게(3줄 이상) 잡힘",
+        ws_rowsafety.row_dimensions[3].height is not None and ws_rowsafety.row_dimensions[3].height > 45,
+    ))
+
+    # --- 2026-08-05 2차 피드백 2: 인쇄 여백을 상하좌우 25px(≈0.26인치)로 축소 ---
+    for name_label, target_ws in (("위험성평가표", ws), ("TBM 일지", ws_prose), ("표준 작업계획서", ws_freeze_wp)):
+        margin_ok = all(
+            abs(getattr(target_ws.page_margins, side) - 25 / 96) < 0.01
+            for side in ("left", "right", "top", "bottom")
+        )
+        results.append((f"{name_label}: 인쇄 여백이 상하좌우 25px(≈0.26인치)로 축소됨", margin_ok))
+
+    # --- 2026-08-05 2차 피드백 2: TBM 일지처럼 정적 스펙 열너비 합이 A4
+    # 인쇄 가능폭보다 훨씬 좁은 문서유형은 우측 여백이 과하게 남지 않도록
+    # 인쇄 배율을 키운다(내용을 넓히는 게 아니라 인쇄 시 확대) ---
+    results.append((
+        "TBM 일지는 인쇄 시 100% 초과로 확대되어 우측 여백을 채움",
+        ws_prose.page_setup.scale is not None and ws_prose.page_setup.scale > 100,
+    ))
+    results.append((
+        "TBM 일지는 배율을 직접 지정하므로 fitToPage(자동 폭맞춤)는 꺼짐",
+        ws_prose.sheet_properties.pageSetUpPr.fitToPage is not True,
+    ))
+    # 위험성평가표는 실제로 열이 많은 문서(최대 13열)라, 그 정적 스펙 그대로
+    # 폭을 합하면 이미 A4 인쇄가능 폭에 가깝거나 넘는다 — 이런 경우는 배율을
+    # 강제로 키우지 않고 기존 fitToWidth=1 자동 맞춤을 그대로 써야 한다
+    # (_print_scale_percent를 직접 호출해 실제 13열 스펙 기준으로 검증 —
+    # ws는 테스트용 3열짜리라 이 불변식을 대표하지 못함).
+    risk_full_scale = _print_scale_percent(
+        "위험성평가표", STYLE_SPECS["위험성평가표"].column_widths, len(STYLE_SPECS["위험성평가표"].column_widths)
+    )
+    results.append(("위험성평가표(실제 13열 스펙)는 배율 확대를 적용하지 않음(None)", risk_full_scale is None))
 
     all_ok = True
     for name, ok in results:

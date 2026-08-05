@@ -8,6 +8,7 @@ openpyxl 워크북으로 바인딩하고, xlsx 파일 바이트를 반환한다.
 """
 
 import io
+import math
 import re
 import unicodedata
 
@@ -83,18 +84,26 @@ def _content_aware_excel_widths(table_blocks, ncols):
 # 않는다(잘 알려진 엑셀 제약) — 그래서 긴 문단이 한 줄로 눌려 보이거나, 심하면
 # 스크롤하다 "내용이 통째로 빠졌다"고 오해하기 쉽다(2026-08-05 실사용 피드백).
 # 행 높이를 직접 계산해서 지정한다.
-_EXCEL_LINE_HEIGHT_PT = 15
-_EXCEL_ROW_HEIGHT_PADDING_PT = 5
+_EXCEL_LINE_HEIGHT_PT = 16
+_EXCEL_ROW_HEIGHT_PADDING_PT = 6
+
+# 엑셀 "열너비" 단위는 통합문서 기본폰트(Calibri 11pt) 기준으로 정의되는데,
+# 본문 셀은 그보다 큰 12pt인 데다 Calibri에는 한글 글리프가 없어 실제로는
+# 맑은 고딕 등으로 자동 치환되어 렌더링 폭이 더 넓다. 이 차이를 그대로
+# 두면 줄바꿈 줄 수를 실제보다 적게 추정해 텍스트가 셀 아래로 잘려 보인다
+# (2026-08-05 2차 피드백 "셀 크기 때문에 텍스트가 잘려서 안 보임"). 안전마진을
+# 곱해 조금 더 넉넉하게(줄이 더 필요하다고) 계산한다.
+_WIDTH_ESTIMATE_SAFETY_FACTOR = 1.25
 
 
 def _wrapped_line_count(text, span_width_units):
-    """span_width_units 폭에 줄바꿈해서 넣을 때 필요한 줄 수(최소 1)."""
+    """span_width_units 폭에 줄바꿈해서 넣을 때 필요한 줄 수(최소 1, 안전마진 적용)."""
     if not text:
         return 1
     total = 0
     for line in _LINE_BREAK_RE.split(str(text)):
-        width = _text_width_units(line)
-        total += max(1, -(-width // max(span_width_units, 1)))  # 올림 나눗셈
+        width = _text_width_units(line) * _WIDTH_ESTIMATE_SAFETY_FACTOR
+        total += max(1, math.ceil(width / max(span_width_units, 1)))
     return max(total, 1)
 
 
@@ -128,20 +137,63 @@ _NO_FREEZE_DOCUMENT_TYPES = {"위험성평가표"}
 # 피드백(2026-08-05) — 그 박스(첫 번째 표) 바로 다음 행에 틀고정한다.
 _FREEZE_AFTER_FIRST_TABLE_DOCUMENT_TYPES = {"표준 작업계획서"}
 
+# "인쇄 미리보기 여백이 너무 많다"(2026-08-05 2차 피드백) — 상하좌우 25px
+# (96dpi 기준 화면 픽셀 환산, 엑셀 인쇄여백 단위인 인치로 변환)로 축소한다.
+# 머리글/바닥글 텍스트는 실제로 쓰지 않으므로 그 여백도 함께 줄인다.
+_PRINT_MARGIN_IN = 25 / 96
+_PRINT_HEADER_FOOTER_MARGIN_IN = 0.2
 
-def _apply_print_settings(ws, document_type, title_row=None):
-    """5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 폭 1페이지 맞춤, 여백."""
+# 인쇄 배율(우측 여백 과다 보정, 2026-08-05 2차 피드백)에 쓰는 A4 가로폭(인치)과
+# 열너비 단위→픽셀 환산 근사치. openpyxl은 이 변환을 제공하지 않아 통합문서
+# 기본폰트(Calibri 11pt) 기준의 관용적 근사식(문자당 7px + 셀 여백/테두리 5px)을
+# 그대로 쓴다 — 정확한 1:1 변환은 아니지만 "얼마나 남는지" 판단에는 충분하다.
+_A4_WIDTH_IN = {"portrait": 8.27, "landscape": 11.69}
+_EXCEL_COL_WIDTH_PX_SLOPE = 7
+_EXCEL_COL_WIDTH_PX_INTERCEPT = 5
+_PRINT_SCALE_MAX_PERCENT = 150
+
+
+def _print_scale_percent(document_type, column_widths, max_col_count):
+    """
+    표 전체 폭이 A4 인쇄가능 폭보다 훨씬 좁은 문서(예: 정적 스펙 열너비를 쓰는
+    TBM 일지)는 fitToWidth=1을 써도 Excel이 자동으로 확대해주지 않아(Excel의
+    "폭 맞춤"은 줄이기만 하고 늘리지는 않음) 우측에 여백이 크게 남는다
+    (2026-08-05 2차 피드백). 필요한 배율을 직접 계산해 100%를 넘길 때만
+    적용하고, 이미 페이지 폭에 가깝거나 넘치는 문서(예: 위험성평가표)는
+    기존 fitToWidth 자동 맞춤을 그대로 쓴다(None 반환).
+    """
+    total_units = _COL_A_WIDTH + sum(column_widths[:max_col_count])
+    if total_units <= 0:
+        return None
+    content_px = total_units * _EXCEL_COL_WIDTH_PX_SLOPE + _EXCEL_COL_WIDTH_PX_INTERCEPT
+    orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
+    usable_in = _A4_WIDTH_IN[orientation] - 2 * _PRINT_MARGIN_IN
+    usable_px = usable_in * 96
+    scale = usable_px / content_px * 100
+    if scale <= 100:
+        return None
+    return min(round(scale), _PRINT_SCALE_MAX_PERCENT)
+
+
+def _apply_print_settings(ws, document_type, title_row=None, scale_percent=None):
+    """5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 배율/폭맞춤, 여백."""
     ws.page_setup.orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
     ws.page_setup.paperSize = _PAPER_SIZE_A4
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_margins.left = 0.75
-    ws.page_margins.right = 0.75
-    ws.page_margins.top = 1.0
-    ws.page_margins.bottom = 1.0
-    ws.page_margins.header = 0.5
-    ws.page_margins.footer = 0.5
+    if scale_percent:
+        # 배율을 직접 지정할 때는 fitToPage를 꺼야 Excel이 그 배율을 그대로 쓴다
+        # (fitToPage가 켜져 있으면 scale을 무시하고 fitToWidth/fitToHeight로 재계산함).
+        ws.sheet_properties.pageSetUpPr.fitToPage = False
+        ws.page_setup.scale = scale_percent
+    else:
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins.left = _PRINT_MARGIN_IN
+    ws.page_margins.right = _PRINT_MARGIN_IN
+    ws.page_margins.top = _PRINT_MARGIN_IN
+    ws.page_margins.bottom = _PRINT_MARGIN_IN
+    ws.page_margins.header = _PRINT_HEADER_FOOTER_MARGIN_IN
+    ws.page_margins.footer = _PRINT_HEADER_FOOTER_MARGIN_IN
     if title_row is not None:
         ws.print_title_rows = f"{title_row}:{title_row}"
 
@@ -353,7 +405,12 @@ def record_to_xlsx_bytes(record):
                 cell_range, CellIsRule(operator="equal", formula=[f'"{grade}"'], fill=fill)
             )
 
-    _apply_print_settings(ws, document_type, title_row=(freeze_row - 1) if freeze_row is not None else None)
+    scale_percent = _print_scale_percent(document_type, column_widths, max_col_count)
+    _apply_print_settings(
+        ws, document_type,
+        title_row=(freeze_row - 1) if freeze_row is not None else None,
+        scale_percent=scale_percent,
+    )
 
     buffer = io.BytesIO()
     wb.save(buffer)
