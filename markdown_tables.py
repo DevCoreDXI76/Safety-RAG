@@ -64,10 +64,11 @@ def parse_markdown_blocks(markdown_text):
     블록 리스트로 반환한다. parse_markdown_tables와 달리 표가 아닌 텍스트를
     버리지 않는다 — "3. 중점(One Point) 위험요인"처럼 표가 아니라 문단인
     섹션도 실제로 존재하기 때문이다(2026-08-04, 실제 생성된 PDF에서 헤딩만
-    남고 본문이 사라지는 버그로 발견). PDF가 표 앞에 "박스 제목"을 그리기
-    위해 필요하다(export_pdf.py 전용, XLSX/HWPX는 계속 parse_markdown_tables를
-    쓴다). 레벨 1(# ...)과 구분선(---)은 각각 문서 제목과 중복/장식용이라
-    제외한다.
+    남고 본문이 사라지는 버그로 발견). 표 앞에 "박스 제목"을 그리기 위해
+    export_pdf.py·export_xlsx.py·export_hwpx.py 3포맷이 모두 이 함수를
+    쓴다(HWPX는 2026-08-05 포팅 — 그 전까지는 parse_markdown_tables만 써서
+    헤딩·서술형 문단이 통째로 버려지고 있었다). 레벨 1(# ...)과 구분선(---)은
+    각각 문서 제목과 중복/장식용이라 제외한다.
     각 블록은 {"type": "heading", "text": str} / {"type": "table", "rows":
     list[list[str]]} / {"type": "text", "text": str}(여러 줄이면 "\\n"으로 이음).
     """
