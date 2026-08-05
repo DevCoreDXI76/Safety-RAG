@@ -558,18 +558,17 @@ def run():
         )
         results.append((f"{name_label}: 인쇄 여백이 상하좌우 25px(≈0.26인치)로 축소됨", margin_ok))
 
-    # --- 2026-08-05 5차 피드백: "A4 우측 부분을 더 사용할 수 있도록"
-    # (표준 작업계획서) / "우측 공간이 많이 남음... 전체적으로 다 쓸 수
-    # 있도록"(TBM 일지) — 정적 스펙 열너비 합이 페이지 폭보다 좁으면(계산된
-    # 배율이 100% 초과) 그 배율로 확대해서 우측 여백을 줄인다. ws_prose
-    # (TBM, 3열)·ws_freeze_wp(작업계획서, 2열)는 둘 다 열이 적어 확대가
-    # 필요한 경우다.
-    tbm_prose_scale = _print_scale_percent("TBM 일지", STYLE_SPECS["TBM 일지"].column_widths, 3)
-    wp_freeze_scale = _print_scale_percent("표준 작업계획서", STYLE_SPECS["표준 작업계획서"].column_widths, 2)
-    results.append(("TBM 일지(열이 적어 확대 필요)는 배율을 명시하고 fitToPage가 꺼짐", (
-        tbm_prose_scale > 100 and ws_prose.sheet_properties.pageSetUpPr.fitToPage is not True
-        and ws_prose.page_setup.scale == tbm_prose_scale
+    # --- 2026-08-05 6차 피드백: TBM 일지는 표가 4열(핵심 위험요인/참석자
+    # 명단)까지 있어 확대하면 실제 인쇄에서 열이 다음 페이지로 밀려나는
+    # 문제가 두 라운드 연속 재현됨 — 확대를 포기하고 열이 적든 많든 항상
+    # 뷰어의 "폭에 맞춤" 자동 축소를 쓴다(안전한 원래 방식으로 되돌림).
+    results.append(("TBM 일지는 (열이 적어도) 더 이상 확대하지 않고 자동 맞춤을 그대로 씀", (
+        ws_prose.sheet_properties.pageSetUpPr.fitToPage is True and ws_prose.page_setup.fitToWidth == 1
     )))
+
+    # 표준 작업계획서는 여전히 "열이 적어 확대 필요"(2·3차 피드백 이후 문제
+    # 제기 없음) 케이스를 유지한다 — ws_freeze_wp(2열)로 검증.
+    wp_freeze_scale = _print_scale_percent("표준 작업계획서", STYLE_SPECS["표준 작업계획서"].column_widths, 2)
     results.append(("표준 작업계획서(열이 적어 확대 필요)도 배율을 명시하고 fitToPage가 꺼짐", (
         wp_freeze_scale > 100 and ws_freeze_wp.sheet_properties.pageSetUpPr.fitToPage is not True
         and ws_freeze_wp.page_setup.scale == wp_freeze_scale
@@ -596,7 +595,7 @@ def run():
         "위험성평가표", [ws.column_dimensions[c].width for c in ("B", "C", "D")], 3
     )))
     results.append(("위험성평가표(실제 13열 스펙)는 배율이 100% 이하로 계산됨", risk_full_scale <= 100))
-    results.append(("계산된 배율은 최소/최대 한도 안에 있음(15~115)", 15 <= risk_full_scale <= 115))
+    results.append(("계산된 배율은 최소/최대 한도 안에 있음(15~105)", 15 <= risk_full_scale <= 105))
 
     # --- 2026-08-05 3차 피드백: "(빈칸 - 현장 기재)" 안내문 회색 처리 ---
     xlsx_bytes_ph = record_to_xlsx_bytes(SAMPLE_RECORD_PLACEHOLDER)
