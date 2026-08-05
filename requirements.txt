@@ -7,5 +7,5 @@ fastapi
 uvicorn[standard]
 requests
 openpyxl
-python-hwpx
+python-hwpx==3.0.0
 reportlab
