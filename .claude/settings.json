@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Notion__notion-search",
+      "mcp__claude_ai_Notion__notion-fetch",
+      "Bash(python -c ' *)",
+      "Bash(python build_knowledge_base.py)",
+      "Bash(python \"C:/Users/SAMSUNG/AppData/Local/Temp/claude/c--MyProjects-03-Study-safety-rag/bb8ac049-062d-46c2-8fec-c8221839765c/scratchpad/test_worktypes.py\")",
+      "Bash(command -v railway)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" https://web-production-9d1bd.up.railway.app/)",
+      "Bash(python test_worktype_citations.py)",
+      "WebSearch",
+      "Bash(rm -f \"c:/MyProjects/03_Study/safety-rag/_check_context.txt\")",
+      "Bash(python test_worktype_citations.py --repeat 4 --only 굴착작업)",
+      "Bash(python -c \"import common, generate_draft; print\\('imports OK'\\)\")"
+    ],
+    "additionalDirectories": [
+      "c:\\MyProjects\\03_Study\\safety-rag"
+    ]
+  }
+}
