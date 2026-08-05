@@ -122,6 +122,24 @@ SAMPLE_RECORD_RISK_REAL_SPEC = {
     ),
 }
 
+# 2026-08-05 3차 실기기 피드백: 위험성평가표처럼 헤더가 여러 줄로 줄바꿈되는
+# 넓은 표는 header+데이터1행조차 남은 페이지 공간에 안 들어가면 표 전체가
+# 다음 페이지로 밀려나 앞 페이지에 큰 빈 공간이 생긴다(repeatHeader="1"는
+# 이미 있었지만 표 자체가 안 쪼개짐). 행 수가 많은 표는 일정 행 수마다
+# 물리적으로 여러 개의 표로 나누고, 나뉜 표마다 헤더 행을 복사해 넣는다.
+SAMPLE_RECORD_RISK_MANY_ROWS = {
+    "document_type": "위험성평가표",
+    "draft": (
+        "| 단위작업 | 유해위험요인 | 빈도 | 강도 | 위험등급 |\n"
+        "|------|------|------|------|------|\n"
+        "| 작업1 | 요인1 | 1 | 1 | C |\n"
+        "| 작업2 | 요인2 | 1 | 2 | C |\n"
+        "| 작업3 | 요인3 | 2 | 2 | B |\n"
+        "| 작업4 | 요인4 | 2 | 3 | B |\n"
+        "| 작업5 | 요인5 | 3 | 3 | A |\n"
+    ),
+}
+
 # PDF(6c8cb5a)/XLSX(63590a2)와 동일하게 "위험성 추정 행렬" 참고표처럼 헤더가
 # "위험등급"이 아니어도(1(낮음)/2(보통)/3(높음)) 셀 값 자체가 등급 문자(A/B/C)면
 # 같은 색을 칠해야 한다.
@@ -165,7 +183,10 @@ def run():
     table_map = doc2.get_table_map()
 
     checks.append(("문서종류 제목 보존", SAMPLE_RECORD["document_type"] in full_text))
-    checks.append(("표 1개 인식됨", len(table_map) == 1))
+    # get_table_map()은 {"tables": [...]} 형태의 dict를 반환한다 — len(dict)는
+    # 항상 키 개수(1)라 표 개수 검증에는 쓸 수 없다(발견 당시 기존 코드가
+    # 이 실수를 하고 있어서 표가 몇 개든 항상 통과하던 상태였음).
+    checks.append(("표 1개 인식됨", len(table_map["tables"]) == 1))
     checks.append(("표 내용(작업단계/감소대책) 보존", "작업단계" in full_text and "매설물 관리기관" in full_text))
     checks.append(("손상 파일 없음", bad_file is None))
 
@@ -302,6 +323,44 @@ def run():
     with zipfile.ZipFile(io.BytesIO(record_to_hwpx_bytes(tbm_record))) as zf:
         tbm_section_xml = zf.read("Contents/section0.xml").decode("utf-8", errors="ignore")
     checks.append(("TBM 일지는 세로형(PORTRAIT)으로 전환됨", 'landscape="PORTRAIT"' in tbm_section_xml))
+
+    # --- 행 수 많은 표는 물리적으로 분할 + 헤더 복사 검증 ---
+    from export_hwpx import _TABLE_CHUNK_ROWS
+    hwpx_bytes_many = record_to_hwpx_bytes(SAMPLE_RECORD_RISK_MANY_ROWS)
+    doc_many = HwpxDocument.open(hwpx_bytes_many)
+    table_map_many = doc_many.get_table_map()
+    data_row_count = 5
+    expected_chunks = -(-data_row_count // _TABLE_CHUNK_ROWS)  # ceil division
+    checks.append((
+        f"데이터 {data_row_count}행짜리 표가 물리적으로 {expected_chunks}개로 분할됨",
+        len(table_map_many["tables"]) == expected_chunks,
+    ))
+    with zipfile.ZipFile(io.BytesIO(hwpx_bytes_many)) as zf:
+        section_many_xml = zf.read("Contents/section0.xml").decode("utf-8", errors="ignore")
+    checks.append((
+        "분할된 표 각각에 헤더 행(단위작업)이 복사되어 있음",
+        section_many_xml.count("단위작업") == expected_chunks,
+    ))
+    checks.append((
+        "분할된 표에도 원본 데이터가 누락 없이 전부 보존됨",
+        all(f"작업{i}" in doc_many.export_text() for i in range(1, 6)),
+    ))
+
+    # kv표("기본 정보"류 항목/내용 2열)는 셀 내용이 짧아 분할 문제가 재현되지
+    # 않으므로, 행이 많아도 나누지 않아야 한다(그대로 나누면 원래 한 페이지에
+    # 넉넉히 들어가던 짧은 표까지 불필요하게 여러 박스로 쪼개짐).
+    kv_many_record = {
+        "document_type": "위험성평가표",
+        "draft": (
+            "| 항목 | 내용 |\n|------|------|\n"
+            "| a | 1 |\n| b | 2 |\n| c | 3 |\n| d | 4 |\n| e | 5 |\n| f | 6 |\n"
+        ),
+    }
+    doc_kv_many = HwpxDocument.open(record_to_hwpx_bytes(kv_many_record))
+    checks.append((
+        "kv표는 데이터 행이 많아도(6행) 분할되지 않음",
+        len(doc_kv_many.get_table_map()["tables"]) == 1,
+    ))
 
     print()
     all_ok = True
