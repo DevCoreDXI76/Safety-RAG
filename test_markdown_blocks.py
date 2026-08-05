@@ -57,6 +57,18 @@ SAMPLE_WITH_PROSE = """## ■ 기본 정보
 """
 
 
+# 2026-08-05 5차 실사용 피드백: TBM 일지 "중점(One Point) 위험요인" 섹션에서
+# "**AC 220V/380V 활선 접촉에 의한 감전**"처럼 markdown 굵게(**) 표시가
+# 그대로(별표 포함) 렌더링됐다 — 표 셀(_clean_cell)과 달리 서술형 텍스트
+# 블록은 굵게 표시를 제거하지 않았던 게 원인.
+SAMPLE_WITH_BOLD_PROSE = """## ■ 비고
+
+**AC 220V/380V 활선 접촉에 의한 감전**
+
+- 선정 이유: 중상해 이상 재해로 이어질 가능성이 높음
+"""
+
+
 def run():
     checks = []
     blocks = parse_markdown_blocks(SAMPLE)
@@ -87,6 +99,12 @@ def run():
     checks.append(("여러 줄 문단이 개행으로 이어져 보존됨", "전체 인원에게 사전 통보" in prose_text_blocks[0]["text"]))
     checks.append(("불릿 목록도 텍스트로 보존됨", "2인 1조" in prose_text_blocks[1]["text"]))
     checks.append(("구분선(---)은 텍스트 블록에 섞여 들어가지 않음", not any("---" in b["text"] for b in prose_text_blocks)))
+
+    # --- 서술형 텍스트 블록도 표 셀·헤딩과 동일하게 굵게(**) 표시가 제거됨 ---
+    bold_blocks = parse_markdown_blocks(SAMPLE_WITH_BOLD_PROSE)
+    bold_text_block = next(b for b in bold_blocks if b["type"] == "text")
+    checks.append(("서술형 텍스트 블록에서 굵게(**) 마크다운 기호가 제거됨", "**" not in bold_text_block["text"]))
+    checks.append(("굵게 표시를 제거해도 실제 문구는 그대로 보존됨", "AC 220V/380V 활선 접촉에 의한 감전" in bold_text_block["text"]))
 
     print()
     all_ok = True

@@ -81,7 +81,10 @@ def parse_markdown_blocks(markdown_text):
             current_rows.clear()
 
     def flush_text():
-        text = "\n".join(current_text_lines).strip()
+        # 표 셀(_clean_cell)과 동일하게 굵게(**) 마크다운 표시를 제거한다 —
+        # 안 그러면 "**AC 220V/380V ...**"처럼 별표가 그대로 렌더링된다
+        # (2026-08-05 5차 실사용 피드백).
+        text = _BOLD_RE.sub(r"\1", "\n".join(current_text_lines)).strip()
         if text:
             blocks.append({"type": "text", "text": text})
         current_text_lines.clear()

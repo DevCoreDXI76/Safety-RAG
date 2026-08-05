@@ -112,23 +112,35 @@ _EXCEL_ROW_HEIGHT_PADDING_PT = 6
 _WIDTH_ESTIMATE_SAFETY_FACTOR = 1.25
 
 
-def _wrapped_line_count(text, span_width_units):
-    """span_width_units 폭에 줄바꿈해서 넣을 때 필요한 줄 수(최소 1, 안전마진 적용)."""
+def _wrapped_line_count(text, span_width_units, font_size=_BODY_FONT_SIZE):
+    """
+    span_width_units 폭에 줄바꿈해서 넣을 때 필요한 줄 수(최소 1, 안전마진
+    적용). font_size가 본문(12pt)보다 크면(예: 박스 제목 16pt) 같은 열 폭에
+    실제로 들어가는 글자 수가 더 적으므로, 폰트 크기 비율만큼 폭 추정치를
+    더 넓게 잡는다.
+    """
     if not text:
         return 1
+    font_scale = font_size / _BODY_FONT_SIZE
     total = 0
     for line in _LINE_BREAK_RE.split(str(text)):
-        width = _text_width_units(line) * _WIDTH_ESTIMATE_SAFETY_FACTOR
+        width = _text_width_units(line) * _WIDTH_ESTIMATE_SAFETY_FACTOR * font_scale
         total += max(1, math.ceil(width / max(span_width_units, 1)))
     return max(total, 1)
 
 
-def _set_row_height(ws, row, cell_texts_and_widths):
-    """그 행의 셀들 중 가장 많은 줄 수가 필요한 셀 기준으로 행 높이를 지정한다."""
+def _set_row_height(ws, row, cell_texts_and_widths, font_size=_BODY_FONT_SIZE):
+    """
+    그 행의 셀들 중 가장 많은 줄 수가 필요한 셀 기준으로 행 높이를 지정한다.
+    font_size가 본문보다 크면(박스 제목 16pt) 줄 높이도 그 비율만큼 키운다 —
+    안 그러면 2줄로 줄바꿈된 제목의 위쪽이 바로 위 행에 눌려 잘려 보인다
+    (2026-08-05 5차 피드백 "제목의 텍스트 윗 부분이 위쪽 셀에 의해서 잘림").
+    """
     max_lines = max(
-        (_wrapped_line_count(text, width) for text, width in cell_texts_and_widths), default=1
+        (_wrapped_line_count(text, width, font_size) for text, width in cell_texts_and_widths), default=1
     )
-    ws.row_dimensions[row].height = max_lines * _EXCEL_LINE_HEIGHT_PT + _EXCEL_ROW_HEIGHT_PADDING_PT
+    line_height_pt = _EXCEL_LINE_HEIGHT_PT * (font_size / _BODY_FONT_SIZE)
+    ws.row_dimensions[row].height = max_lines * line_height_pt + _EXCEL_ROW_HEIGHT_PADDING_PT
 
 
 def _fill(hex_color):
@@ -200,35 +212,41 @@ _PRINT_SCALE_MAX_PERCENT = 115
 # (음수/0 같은 비정상값만 막는 안전망 수준). 위험성평가표는 열이 최대 13개라
 # 필요하면 이보다 훨씬 작게도 줄어들어야 한 페이지 폭에 들어간다.
 _PRINT_SCALE_MIN_PERCENT = 15
+# 인쇄 배율 계산 전용 안전마진 — 행높이 계산의 안전마진
+# (_WIDTH_ESTIMATE_SAFETY_FACTOR, 1.25배)을 그대로 가져다 쓰면 실제로
+# 필요한 것보다 지나치게 많이 줄어든다는 피드백을 받았다(2026-08-05 5차
+# "인쇄 배율을 50%까지 늘려줘"). 셀 안 텍스트 잘림(행높이)과 달리 폭 초과는
+# 페이지가 여러 장으로 나뉘는 형태로 눈에 보이므로 마진을 최소화해도 된다.
+_PRINT_SCALE_WIDTH_SAFETY_FACTOR = 1.0
 # 반올림/렌더링 오차로 실제 폭이 계산값보다 살짝 더 넓어도 페이지를 넘기지
-# 않도록, 계산값을 항상 내림(floor)한 뒤 추가로 몇 %p 더 줄여서 적용한다.
-_PRINT_SCALE_SAFETY_BUFFER_PERCENT = 3
+# 않도록, 계산값을 항상 내림(floor)한 뒤 1%p 더 줄여서 적용한다.
+_PRINT_SCALE_SAFETY_BUFFER_PERCENT = 1
 
 # 위험성평가표는 열이 많아(최대 13열) 폭이 페이지를 넘기기 쉽고, 그때 배율을
 # 직접 계산해서 명시하지 않으면 한 페이지 폭에 들어오지 못하고 좌우로
 # 페이지가 나뉘는 문제가 실사용 인쇄 미리보기에서 확인됐다(2026-08-05 4차
-# 피드백 "페이지가 나눠지지 않도록"). 반면 표준 작업계획서·TBM 일지는 열이
-# 적어 뷰어의 "폭에 맞춤" 자동 축소만으로 충분하고, 사용자가 명시적으로
-# 자동 맞춤으로 되돌려 달라고 요청했다(2026-08-05 4차 피드백) — 그래서 이
-# 문서유형만 배율을 직접 계산해서 적용한다.
+# 피드백) — 이 문서유형은 계산된 배율을 항상 그대로 적용한다(축소든 확대든).
 _EXPLICIT_SCALE_DOCUMENT_TYPES = {"위험성평가표"}
+# 표준 작업계획서·TBM 일지는 정적 스펙 열너비가 좁아 우측에 여백이 많이
+# 남는다는 피드백(2026-08-05 3·5차)이 반복됐다 — 계산된 배율이 100%를
+# 넘길 때(즉 확대해도 안전할 때)만 명시적으로 적용하고, 100% 이하면(드물게
+# 내용이 길어질 때) 굳이 줄이지 않고 뷰어의 "폭에 맞춤" 자동 축소에 맡긴다
+# (사용자가 요청한 "배율을 직접 계산하지 말고 자동 맞춤으로"와 절충).
+_ENLARGE_ONLY_SCALE_DOCUMENT_TYPES = {"표준 작업계획서", "TBM 일지"}
 
 
 def _print_scale_percent(document_type, column_widths, max_col_count):
     """
-    _EXPLICIT_SCALE_DOCUMENT_TYPES에 해당하는 문서유형이 실제 열 폭 기준으로
-    A4 인쇄가능 폭에 맞으려면 몇 %로 축소해야 하는지 계산한다. 행 높이
-    계산과 같은 안전마진(_WIDTH_ESTIMATE_SAFETY_FACTOR)을 폭 추정에도
-    일관되게 적용해, 실제 렌더링 폭을 과소평가해 배율을 과도하게 키우는 일
-    (그 결과 오히려 넘치는 회귀, 2차 수정 때 TBM 일지에서 실제로 발생)이
-    없도록 한다.
+    문서유형이 실제 열 폭 기준으로 A4 인쇄가능 폭에 맞으려면 몇 %가 필요한지
+    계산한다(축소 필요 시 100% 미만, 확대해도 되면 100% 초과). 호출부
+    (_apply_print_settings)가 문서유형별로 이 값을 실제로 적용할지 결정한다.
     """
     total_units = _COL_A_WIDTH + sum(column_widths[:max_col_count])
     if total_units <= 0:
         return 100
     content_px = (
         total_units * _EXCEL_COL_WIDTH_PX_SLOPE + _EXCEL_COL_WIDTH_PX_INTERCEPT
-    ) * _WIDTH_ESTIMATE_SAFETY_FACTOR
+    ) * _PRINT_SCALE_WIDTH_SAFETY_FACTOR
     orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
     usable_in = _A4_WIDTH_IN[orientation] - 2 * _PRINT_MARGIN_IN
     usable_px = usable_in * 96
@@ -238,14 +256,19 @@ def _print_scale_percent(document_type, column_widths, max_col_count):
 
 def _apply_print_settings(ws, document_type, title_row=None, scale_percent=100):
     """
-    5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 여백. 위험성평가표만
-    배율을 직접 계산해 명시하고(_EXPLICIT_SCALE_DOCUMENT_TYPES), 나머지는
-    뷰어의 "폭에 맞춤" 자동 축소를 쓴다(2026-08-05 4차 피드백 — 사용자가
-    명시적으로 자동 맞춤으로 되돌려 달라고 요청).
+    5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 여백.
+    - 위험성평가표: 계산된 배율을 항상 명시(_EXPLICIT_SCALE_DOCUMENT_TYPES)
+    - 표준 작업계획서·TBM 일지: 계산된 배율이 100%를 넘길 때만(확대) 명시,
+      아니면 뷰어의 "폭에 맞춤" 자동 축소(_ENLARGE_ONLY_SCALE_DOCUMENT_TYPES)
+    - 그 외: 항상 뷰어의 "폭에 맞춤" 자동 축소
     """
     ws.page_setup.orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
     ws.page_setup.paperSize = _PAPER_SIZE_A4
-    if document_type in _EXPLICIT_SCALE_DOCUMENT_TYPES:
+    use_explicit_scale = (
+        document_type in _EXPLICIT_SCALE_DOCUMENT_TYPES
+        or (document_type in _ENLARGE_ONLY_SCALE_DOCUMENT_TYPES and scale_percent > 100)
+    )
+    if use_explicit_scale:
         ws.sheet_properties.pageSetUpPr.fitToPage = False
         ws.page_setup.scale = scale_percent
     else:
@@ -335,7 +358,10 @@ def record_to_xlsx_bytes(record):
                     start_row=current_row, start_column=1 + _COL_OFFSET,
                     end_row=current_row, end_column=max_col_count + _COL_OFFSET,
                 )
-            _set_row_height(ws, current_row, [(block["text"], sum(column_widths[:max_col_count]))])
+            _set_row_height(
+                ws, current_row, [(block["text"], sum(column_widths[:max_col_count]))],
+                font_size=_BOX_TITLE_FONT.size,
+            )
             current_row += 1
             continue
 

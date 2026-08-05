@@ -223,6 +223,37 @@ SAMPLE_RECORD_PLACEHOLDER = {
     "created_at": "2026-08-05 10:00:00",
 }
 
+# 2026-08-05 5차 피드백: "5, 7번 제목의 텍스트 윗 부분이 위쪽 셀에 의해서
+# 일부가 잘림" — 박스 제목(16pt)이 2줄 이상으로 줄바꿈되는데, 행 높이
+# 계산이 본문(12pt) 기준 줄 높이를 그대로 썼던 게 원인. 실제 문제가 됐던
+# "7. 절연용 보호구..." 제목을 그대로 재현한다.
+SAMPLE_RECORD_LONG_HEADING = {
+    "id": "longheading1",
+    "document_type": "표준 작업계획서",
+    "project_info": "박스 제목 줄바꿈 행높이 검증용",
+    "draft": (
+        "## ■ 작업 개요\n\n| 항목 | 내용 |\n|------|------|\n| 현장명 | 강남 |\n\n"
+        "## ■ 7. 절연용 보호구 및 방호구 등 준비·점검·착용·사용에 관한 사항\n\n"
+        "- 절연용 보호구: 절연장갑, 절연화, 보안면 착용\n"
+    ),
+    "created_at": "2026-08-05 10:00:00",
+}
+
+# 2026-08-05 5차 피드백: TBM 일지도 열이 많으면(6열) 계산된 배율이 100%
+# 이하로 나와야 하고, 그럴 땐 확대하지 않고 뷰어의 자동 맞춤을 써야 한다
+# (확대 전용 모드 — 100% 이하일 때 강제로 축소하지 않는지 검증).
+SAMPLE_RECORD_TBM_WIDE = {
+    "id": "tbmwide1",
+    "document_type": "TBM 일지",
+    "project_info": "열 많은 TBM 일지(확대 불필요) 검증용",
+    "draft": (
+        "| 번호 | 유해위험요인 | 대책 | 위험등급 | 담당자 | 확인일 |\n"
+        "|------|------|------|------|------|------|\n"
+        "| 1 | 감전 | 절연장갑 착용 | B | 김철수 | 2026-08-05 |\n"
+    ),
+    "created_at": "2026-08-05 10:00:00",
+}
+
 # 2026-08-05 요청: "표준 작업계획서 (전기 작업)"처럼 문서 제목 옆에 세부
 # 작업유형을 표기 — work_type이 record에 있을 때만 붙는다.
 SAMPLE_RECORD_WORKPLAN_WITH_WORKTYPE = {
@@ -272,6 +303,17 @@ def run():
     # 인쇄 페이지 폭을 넘겨 끝부분이 잘리는 문제("7. 절연용 보호구 및 방호구
     # 등 준비·점검·착용·사용에 관한 사항") — 박스 제목도 wrap_text가 켜져야 한다 ---
     results.append(("박스 제목도 줄바꿈(wrap_text)이 켜져 있어 길어도 안 잘림", ws.cell(row=2, column=2).alignment.wrap_text is True))
+
+    # --- 2026-08-05 5차 피드백: 2줄 이상으로 줄바꿈되는 박스 제목(16pt)은
+    # 본문(12pt)보다 줄 높이가 커야 한다 — 안 그러면 위쪽 줄이 바로 위 행에
+    # 눌려 잘려 보인다. 1행=제목, 2행=헤딩("■ 작업 개요"), 3행=표헤더,
+    # 4행=데이터, 5행=빈행, 6행=긴 헤딩("■ 7. 절연용 보호구...") ---
+    xlsx_bytes_heading = record_to_xlsx_bytes(SAMPLE_RECORD_LONG_HEADING)
+    ws_heading = load_workbook(io.BytesIO(xlsx_bytes_heading)).active
+    results.append((
+        "여러 줄로 줄바꿈되는 긴 박스 제목의 행 높이가 넉넉하게 계산됨(16pt 기준)",
+        ws_heading.row_dimensions[6].height is not None and ws_heading.row_dimensions[6].height > 45,
+    ))
 
     results.append((
         "첫 번째 표 헤더 위치(헤딩 다음 행인 3행, B3/C3) 확인",
@@ -516,13 +558,30 @@ def run():
         )
         results.append((f"{name_label}: 인쇄 여백이 상하좌우 25px(≈0.26인치)로 축소됨", margin_ok))
 
-    # --- 2026-08-05 4차 피드백: "배율을 직접 계산하지 말고 뷰어의 폭 자동
-    # 맞춤으로 다시 세팅해줘"(표준 작업계획서·TBM 일지) — 이 두 문서유형은
-    # fitToWidth 자동 맞춤으로 되돌리고, 위험성평가표만(열이 많아 자동 맞춤이
-    # 뷰어에서 실패하는 게 확인됨) 명시적 배율 계산을 유지한다.
-    results.append(("TBM 일지는 뷰어의 폭 자동 맞춤(fitToPage)으로 되돌아감", ws_prose.sheet_properties.pageSetUpPr.fitToPage is True))
-    results.append(("TBM 일지는 fitToWidth=1이 설정됨(자동 맞춤)", ws_prose.page_setup.fitToWidth == 1))
-    results.append(("표준 작업계획서도 뷰어의 폭 자동 맞춤(fitToPage)으로 되돌아감", ws_freeze_wp.sheet_properties.pageSetUpPr.fitToPage is True))
+    # --- 2026-08-05 5차 피드백: "A4 우측 부분을 더 사용할 수 있도록"
+    # (표준 작업계획서) / "우측 공간이 많이 남음... 전체적으로 다 쓸 수
+    # 있도록"(TBM 일지) — 정적 스펙 열너비 합이 페이지 폭보다 좁으면(계산된
+    # 배율이 100% 초과) 그 배율로 확대해서 우측 여백을 줄인다. ws_prose
+    # (TBM, 3열)·ws_freeze_wp(작업계획서, 2열)는 둘 다 열이 적어 확대가
+    # 필요한 경우다.
+    tbm_prose_scale = _print_scale_percent("TBM 일지", STYLE_SPECS["TBM 일지"].column_widths, 3)
+    wp_freeze_scale = _print_scale_percent("표준 작업계획서", STYLE_SPECS["표준 작업계획서"].column_widths, 2)
+    results.append(("TBM 일지(열이 적어 확대 필요)는 배율을 명시하고 fitToPage가 꺼짐", (
+        tbm_prose_scale > 100 and ws_prose.sheet_properties.pageSetUpPr.fitToPage is not True
+        and ws_prose.page_setup.scale == tbm_prose_scale
+    )))
+    results.append(("표준 작업계획서(열이 적어 확대 필요)도 배율을 명시하고 fitToPage가 꺼짐", (
+        wp_freeze_scale > 100 and ws_freeze_wp.sheet_properties.pageSetUpPr.fitToPage is not True
+        and ws_freeze_wp.page_setup.scale == wp_freeze_scale
+    )))
+
+    # 반대로 TBM 일지도 열이 많아(6열) 계산된 배율이 100% 이하면 굳이 확대하지
+    # 않고 뷰어의 "폭에 맞춤" 자동 축소를 그대로 쓴다(확대 전용 모드 검증).
+    xlsx_bytes_tbm_wide = record_to_xlsx_bytes(SAMPLE_RECORD_TBM_WIDE)
+    ws_tbm_wide = load_workbook(io.BytesIO(xlsx_bytes_tbm_wide)).active
+    results.append(("열이 많아 확대가 불필요한 TBM 일지는 fitToWidth 자동 맞춤을 그대로 씀", (
+        ws_tbm_wide.sheet_properties.pageSetUpPr.fitToPage is True and ws_tbm_wide.page_setup.fitToWidth == 1
+    )))
 
     # 위험성평가표(실제 13열 스펙)는 계속 명시적 배율을 계산해서 쓴다 —
     # "페이지가 나눠지지 않도록"(4차 피드백) 요구가 최우선이라 최소 배율
