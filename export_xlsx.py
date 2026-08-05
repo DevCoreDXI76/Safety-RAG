@@ -30,7 +30,12 @@ _TITLE_FONT = Font(size=28, bold=True, underline="single")
 _ALIGN_TITLE_DOC = Alignment(horizontal="center", vertical="center")
 
 _BOX_TITLE_FONT = Font(size=16, bold=True, color="000000")
-_ALIGN_TITLE = Alignment(horizontal="left", vertical="center")
+# wrap_text 누락 시 긴 박스 제목(예: "7. 절연용 보호구 및 방호구 등 준비·점검·
+# 착용·사용에 관한 사항")이 줄바꿈 없이 한 줄로 나가면서 인쇄 페이지 폭을
+# 넘겨 끝부분이 잘려 보인다(2026-08-05 4차 피드백). 행 높이는 이미
+# _set_row_height로 이 제목 길이만큼 계산해두므로, wrap_text만 켜면 그 안에서
+# 자연스럽게 줄바꿈된다.
+_ALIGN_TITLE = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
 _BODY_FONT_SIZE = 12
 _HEADER_FONT = Font(size=_BODY_FONT_SIZE, bold=True)
@@ -73,12 +78,21 @@ def _content_aware_excel_widths(table_blocks, ncols):
     """
     표 전체(같은 열 위치를 공유하는 모든 표)에서 각 열의 가장 넓은 셀 내용을
     기준으로 엑셀 열 폭을 정한다(2026-08-05 요청, 위험성평가표 전용).
+
+    폭 측정은 실제로 셀에 표시되는 값 기준이어야 한다 — 빈도·강도·위험등급처럼
+    한 글자/한 단어만 들어가는 열도 원본 마크다운 셀 텍스트에는 "B(AI 제안값,
+    현장 확인 필수)"처럼 안내문이 붙어 있어(parse_ai_score_cell로 나중에
+    분리·제거됨), 그 원문 그대로 폭을 재면 실제로는 좁아야 할 열이 크게
+    부풀려진다(2026-08-05 4차 피드백 "빈도·강도·위험등급 등의 셀 가로크기를
+    셀 제목의 크기만큼 줄일 것" — 원인이 바로 이것이었음).
     """
     widths = [_MIN_EXCEL_COL_WIDTH] * ncols
     for tb in table_blocks:
         for row in tb["rows"]:
             for col in range(min(len(row), ncols)):
-                widths[col] = max(widths[col], _text_width_units(row[col]))
+                number, _note = parse_ai_score_cell(row[col])
+                measure_text = str(number) if number is not None else row[col]
+                widths[col] = max(widths[col], _text_width_units(measure_text))
     return [min(w + _EXCEL_COL_WIDTH_PADDING, _MAX_EXCEL_COL_WIDTH) for w in widths]
 
 
@@ -181,22 +195,33 @@ _A4_WIDTH_IN = {"portrait": 8.27, "landscape": 11.69}
 _EXCEL_COL_WIDTH_PX_SLOPE = 7
 _EXCEL_COL_WIDTH_PX_INTERCEPT = 5
 _PRINT_SCALE_MAX_PERCENT = 115
-_PRINT_SCALE_MIN_PERCENT = 50
+# "페이지가 안 나눠지도록 A4 가로 사이즈에 다 들어오게 해달라"(2026-08-05
+# 4차 피드백)는 요구가 최우선이라, 최소 배율에는 사실상 하한을 두지 않는다
+# (음수/0 같은 비정상값만 막는 안전망 수준). 위험성평가표는 열이 최대 13개라
+# 필요하면 이보다 훨씬 작게도 줄어들어야 한 페이지 폭에 들어간다.
+_PRINT_SCALE_MIN_PERCENT = 15
 # 반올림/렌더링 오차로 실제 폭이 계산값보다 살짝 더 넓어도 페이지를 넘기지
 # 않도록, 계산값을 항상 내림(floor)한 뒤 추가로 몇 %p 더 줄여서 적용한다.
 _PRINT_SCALE_SAFETY_BUFFER_PERCENT = 3
 
+# 위험성평가표는 열이 많아(최대 13열) 폭이 페이지를 넘기기 쉽고, 그때 배율을
+# 직접 계산해서 명시하지 않으면 한 페이지 폭에 들어오지 못하고 좌우로
+# 페이지가 나뉘는 문제가 실사용 인쇄 미리보기에서 확인됐다(2026-08-05 4차
+# 피드백 "페이지가 나눠지지 않도록"). 반면 표준 작업계획서·TBM 일지는 열이
+# 적어 뷰어의 "폭에 맞춤" 자동 축소만으로 충분하고, 사용자가 명시적으로
+# 자동 맞춤으로 되돌려 달라고 요청했다(2026-08-05 4차 피드백) — 그래서 이
+# 문서유형만 배율을 직접 계산해서 적용한다.
+_EXPLICIT_SCALE_DOCUMENT_TYPES = {"위험성평가표"}
+
 
 def _print_scale_percent(document_type, column_widths, max_col_count):
     """
-    엑셀의 "폭에 맞춤"(fitToWidth=1) 자동 축소는 실제 뷰어(한셀 등)에서
-    지켜지지 않아 표 내용이 페이지 폭을 넘겨 잘리거나, 초과분이 빈 페이지로
-    밀려나는 문제가 실사용 인쇄 미리보기에서 확인됐다(2026-08-05 3차 피드백).
-    그래서 뷰어의 자동 맞춤을 신뢰하지 않고, 필요한 인쇄 배율을 항상 직접
-    계산해서 명시적으로 지정한다 — 행 높이 계산과 같은 안전마진
-    (_WIDTH_ESTIMATE_SAFETY_FACTOR)을 폭 추정에도 일관되게 적용해, 실제
-    렌더링 폭을 과소평가해 배율을 과도하게 키우는 일(그 결과 오히려 넘치는
-    회귀, 2차 수정 때 TBM 일지에서 실제로 발생)이 없도록 한다.
+    _EXPLICIT_SCALE_DOCUMENT_TYPES에 해당하는 문서유형이 실제 열 폭 기준으로
+    A4 인쇄가능 폭에 맞으려면 몇 %로 축소해야 하는지 계산한다. 행 높이
+    계산과 같은 안전마진(_WIDTH_ESTIMATE_SAFETY_FACTOR)을 폭 추정에도
+    일관되게 적용해, 실제 렌더링 폭을 과소평가해 배율을 과도하게 키우는 일
+    (그 결과 오히려 넘치는 회귀, 2차 수정 때 TBM 일지에서 실제로 발생)이
+    없도록 한다.
     """
     total_units = _COL_A_WIDTH + sum(column_widths[:max_col_count])
     if total_units <= 0:
@@ -213,14 +238,20 @@ def _print_scale_percent(document_type, column_widths, max_col_count):
 
 def _apply_print_settings(ws, document_type, title_row=None, scale_percent=100):
     """
-    5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 여백. 배율은 항상 명시적
-    수치로 지정한다(fitToWidth 자동 맞춤은 뷰어별로 신뢰할 수 없음이 실사용
-    인쇄 미리보기에서 확인됨 — 2026-08-05 3차 피드백).
+    5개 서식목업 공통 인쇄설정: A4, 문서유형별 방향, 여백. 위험성평가표만
+    배율을 직접 계산해 명시하고(_EXPLICIT_SCALE_DOCUMENT_TYPES), 나머지는
+    뷰어의 "폭에 맞춤" 자동 축소를 쓴다(2026-08-05 4차 피드백 — 사용자가
+    명시적으로 자동 맞춤으로 되돌려 달라고 요청).
     """
     ws.page_setup.orientation = "portrait" if document_type in PORTRAIT_DOCUMENT_TYPES else "landscape"
     ws.page_setup.paperSize = _PAPER_SIZE_A4
-    ws.sheet_properties.pageSetUpPr.fitToPage = False
-    ws.page_setup.scale = scale_percent
+    if document_type in _EXPLICIT_SCALE_DOCUMENT_TYPES:
+        ws.sheet_properties.pageSetUpPr.fitToPage = False
+        ws.page_setup.scale = scale_percent
+    else:
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_margins.left = _PRINT_MARGIN_IN
     ws.page_margins.right = _PRINT_MARGIN_IN
     ws.page_margins.top = _PRINT_MARGIN_IN

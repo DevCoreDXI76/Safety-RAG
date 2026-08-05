@@ -99,6 +99,24 @@ SAMPLE_RECORD_RISK_WIDE_NARROW = {
     "created_at": "2026-08-05 10:00:00",
 }
 
+# 2026-08-05 4차 피드백: 실제 생성 초안에서는 빈도·강도·위험등급 값에 항상
+# "(AI 제안값, 현장 확인 필수)" 안내문이 붙어 온다(system_prompt 규칙) — 이
+# 원문 그대로 폭을 재면 "B(AI 제안값, 현장 확인 필수)"처럼 긴 문자열 기준으로
+# 계산되어, 실제로는 한 글자만 들어가는 열이 크게 부풀려진다. 표시되는 값
+# (AI 안내문 제거 후)만 기준으로 재야 한다.
+SAMPLE_RECORD_RISK_AI_ANNOTATED = {
+    "id": "ai_annotated_width1",
+    "document_type": "위험성평가표",
+    "project_info": "AI 제안값 안내문 제외 열폭 검증용",
+    "draft": (
+        "| 단위작업 | 빈도 | 강도 | 위험등급 |\n"
+        "|------|------|------|------|\n"
+        "| 배전반 반입·설치 | 2(AI 제안값, 현장 확인 필수) | 3(AI 제안값, 현장 확인 필수) | "
+        "A(AI 제안값, 현장 확인 필수) |\n"
+    ),
+    "created_at": "2026-08-05 10:00:00",
+}
+
 # 2026-08-05 요청: 엑셀은 병합된 셀에서 줄바꿈(wrap_text)이 있어도 행 높이를
 # 자동으로 늘려주지 않는다 — 그래서 종합의견 등 긴 문단이 한 줄로 눌려 보이고,
 # 심하면 "내용이 통째로 빠졌다"고 오해하게 만든다. 행 높이를 직접 계산해서
@@ -250,6 +268,10 @@ def run():
     results.append(("레벨1 제목('위험성평가표 초안')은 렌더링 안 됨(문서 제목과 중복)", not any(
         ws.cell(row=r, column=2).value == "위험성평가표 초안" for r in range(1, 15)
     )))
+    # --- 2026-08-05 4차 피드백: 긴 박스 제목이 줄바꿈 없이 한 줄로 나가면서
+    # 인쇄 페이지 폭을 넘겨 끝부분이 잘리는 문제("7. 절연용 보호구 및 방호구
+    # 등 준비·점검·착용·사용에 관한 사항") — 박스 제목도 wrap_text가 켜져야 한다 ---
+    results.append(("박스 제목도 줄바꿈(wrap_text)이 켜져 있어 길어도 안 잘림", ws.cell(row=2, column=2).alignment.wrap_text is True))
 
     results.append((
         "첫 번째 표 헤더 위치(헤딩 다음 행인 3행, B3/C3) 확인",
@@ -390,6 +412,22 @@ def run():
         [ws4.column_dimensions[c].width for c in ("B", "C", "D")] != static_spec_widths[:3],
     ))
 
+    # --- 2026-08-05 4차 피드백: "빈도·강도·위험등급 등의 셀 가로크기를 셀
+    # 제목의 크기만큼 줄일 것" — 실제 원인은 AI 제안값 안내문("(AI 제안값,
+    # 현장 확인 필수)")이 원문 그대로 폭 계산에 들어가 열이 부풀려진 것이었음.
+    # 표시되는 값(안내문 제거 후)만 기준으로 재면 헤더 텍스트 폭 수준으로
+    # 좁아져야 한다(1행=제목, 2행=표헤더 → B=단위작업, C=빈도, D=강도, E=위험등급).
+    xlsx_bytes_ai_width = record_to_xlsx_bytes(SAMPLE_RECORD_RISK_AI_ANNOTATED)
+    ws_ai_width = load_workbook(io.BytesIO(xlsx_bytes_ai_width)).active
+    results.append((
+        "AI 제안값 안내문이 붙은 '빈도' 열도 헤더 크기 수준으로 좁게 계산됨(10 이하)",
+        ws_ai_width.column_dimensions["C"].width <= 10,
+    ))
+    results.append((
+        "AI 제안값 안내문이 붙은 '위험등급' 열도 헤더 크기 수준으로 좁게 계산됨(12 이하)",
+        ws_ai_width.column_dimensions["E"].width <= 12,
+    ))
+
     # --- 다른 문서유형(TBM 일지 등)은 여전히 정적 스펙을 그대로 씀(스코프 밖) ---
     xlsx_bytes_other = record_to_xlsx_bytes(SAMPLE_RECORD_OTHER_DOC_TYPE)
     wb5 = load_workbook(io.BytesIO(xlsx_bytes_other))
@@ -478,26 +516,28 @@ def run():
         )
         results.append((f"{name_label}: 인쇄 여백이 상하좌우 25px(≈0.26인치)로 축소됨", margin_ok))
 
-    # --- 2026-08-05 3차 피드백: fitToWidth 자동 맞춤을 뷰어가 지키지 않아
-    # 인쇄 미리보기에서 내용이 잘리는 게 실제로 확인됨 — 이제는 항상 명시적
-    # 배율을 계산해서 적용하고(fitToPage는 항상 꺼짐), 그 배율은
-    # _print_scale_percent가 실제로 계산한 값과 정확히 일치해야 한다
-    # (안전마진을 반영해 100%를 넘겨 확대하지는 않는다 — 2차 수정 때 TBM
-    # 일지를 124%로 확대했다가 실제 인쇄에서 오히려 넘쳐 잘렸던 회귀 방지).
-    # SAMPLE_RECORD_WITH_HEADING_AND_PROSE(ws_prose)의 표 중 가장 열이 많은
-    # 것은 3열("핵심 위험요인" 표) — 실제 record_to_xlsx_bytes 내부에서 쓰는
-    # max_col_count와 동일하게 맞춰야 계산값이 일치한다.
-    tbm_widths = STYLE_SPECS["TBM 일지"].column_widths
-    expected_tbm_scale = _print_scale_percent("TBM 일지", tbm_widths, 3)
-    results.append(("TBM 일지는 배율을 직접 지정하므로 fitToPage(자동 폭맞춤)는 꺼짐", ws_prose.sheet_properties.pageSetUpPr.fitToPage is not True))
-    results.append(("TBM 일지에 적용된 배율이 _print_scale_percent 계산값과 일치", ws_prose.page_setup.scale == expected_tbm_scale))
+    # --- 2026-08-05 4차 피드백: "배율을 직접 계산하지 말고 뷰어의 폭 자동
+    # 맞춤으로 다시 세팅해줘"(표준 작업계획서·TBM 일지) — 이 두 문서유형은
+    # fitToWidth 자동 맞춤으로 되돌리고, 위험성평가표만(열이 많아 자동 맞춤이
+    # 뷰어에서 실패하는 게 확인됨) 명시적 배율 계산을 유지한다.
+    results.append(("TBM 일지는 뷰어의 폭 자동 맞춤(fitToPage)으로 되돌아감", ws_prose.sheet_properties.pageSetUpPr.fitToPage is True))
+    results.append(("TBM 일지는 fitToWidth=1이 설정됨(자동 맞춤)", ws_prose.page_setup.fitToWidth == 1))
+    results.append(("표준 작업계획서도 뷰어의 폭 자동 맞춤(fitToPage)으로 되돌아감", ws_freeze_wp.sheet_properties.pageSetUpPr.fitToPage is True))
 
-    # 위험성평가표(실제 13열 스펙)도 이제 fitToWidth가 아니라 명시적 배율을 쓴다 —
-    # 열이 많아 폭이 넉넉하므로 배율은 100% 이하로 계산되어야 한다.
+    # 위험성평가표(실제 13열 스펙)는 계속 명시적 배율을 계산해서 쓴다 —
+    # "페이지가 나눠지지 않도록"(4차 피드백) 요구가 최우선이라 최소 배율
+    # 하한을 사실상 없애서(15%), 필요하면 그만큼도 줄어들 수 있어야 한다.
     risk_full_widths = STYLE_SPECS["위험성평가표"].column_widths
     risk_full_scale = _print_scale_percent("위험성평가표", risk_full_widths, len(risk_full_widths))
+    results.append(("위험성평가표는 여전히 배율을 직접 지정(fitToPage 꺼짐)", ws.sheet_properties.pageSetUpPr.fitToPage is not True))
+    # SAMPLE_RECORD(ws)는 kv표(2열)+위험요인표(순번/위험요인/위험성, 3열)라
+    # 시트 전체 max_col_count는 3(B~D열) — 실제 record_to_xlsx_bytes와 같은
+    # 값으로 맞춰야 계산값이 일치한다.
+    results.append(("위험성평가표에 적용된 배율이 _print_scale_percent 계산값과 일치", ws.page_setup.scale == _print_scale_percent(
+        "위험성평가표", [ws.column_dimensions[c].width for c in ("B", "C", "D")], 3
+    )))
     results.append(("위험성평가표(실제 13열 스펙)는 배율이 100% 이하로 계산됨", risk_full_scale <= 100))
-    results.append(("계산된 배율은 최소/최대 한도 안에 있음(50~115)", 50 <= risk_full_scale <= 115 and 50 <= expected_tbm_scale <= 115))
+    results.append(("계산된 배율은 최소/최대 한도 안에 있음(15~115)", 15 <= risk_full_scale <= 115))
 
     # --- 2026-08-05 3차 피드백: "(빈칸 - 현장 기재)" 안내문 회색 처리 ---
     xlsx_bytes_ph = record_to_xlsx_bytes(SAMPLE_RECORD_PLACEHOLDER)
