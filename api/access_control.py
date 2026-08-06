@@ -158,3 +158,38 @@ def remove_pending_request(user_id):
         data = _load(PENDING_REQUESTS_FILE)
         data.pop(str(user_id), None)
         _save(PENDING_REQUESTS_FILE, data)
+
+
+_INVALID_NAME_CHARS = (",", "，", "?", "？", ".", "。")
+
+
+def is_valid_name_reply(text):
+    """이름 답장으로 받아들일 수 있는 텍스트인지 검사한다. 20자 이내,
+    "/"로 시작하지 않고, 쉼표·물음표·마침표를 포함하지 않으면 True.
+    문장형 답장(예: 이름 요청과 피드백 자유의견 대기가 겹쳐 들어온 경우)을
+    이름으로 잘못 저장하지 않기 위한 최소 방어."""
+    text = (text or "").strip()
+    if not text or len(text) > 20:
+        return False
+    if text.startswith("/"):
+        return False
+    if any(ch in text for ch in _INVALID_NAME_CHARS):
+        return False
+    return True
+
+
+def is_awaiting_name(user_id):
+    """이 user_id가 지금 "이름 답장 대기" 상태인지 — 신규 신청(pending에
+    있고 display_name 미입력) 또는 기존 승인자 소급 요청(allowed에 있고
+    display_name 미입력 + name_asked_at 있음) 둘 중 하나면 True."""
+    pending = get_pending_request(user_id)
+    if pending is not None and not pending.get("display_name"):
+        return True
+
+    with _lock:
+        allowed_data = _load(ALLOWED_USERS_FILE)
+    record = allowed_data.get(str(user_id))
+    if record and not record.get("display_name") and record.get("name_asked_at"):
+        return True
+
+    return False
