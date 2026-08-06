@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common import DATA_DIR, KST
-from api.access_control import is_allowed, register_pending_request, backfill_first_name
+from api.access_control import is_allowed, register_pending_request, backfill_first_name, maybe_ask_backfill_name
 
 load_dotenv()
 
@@ -105,5 +105,9 @@ def require_telegram_auth(x_telegram_init_data: str = Header(...)) -> dict:
     # 매 호출마다 텔레그램이 넘겨주는 first_name으로 조용히 보강해
     # resolve_display_name이 언제까지나 user_id 숫자로 폴백하지 않게 한다.
     backfill_first_name(user_id, user.get("first_name"))
+
+    # display_name이 아직 없는 기존 승인자에게는(최초 1회) 이름을
+    # 요청한다 — 문서 생성 등 이 함수 이후의 흐름은 절대 막지 않는다.
+    maybe_ask_backfill_name(user_id)
 
     return {"user_id": user_id, "username": user.get("username"), "first_name": user.get("first_name")}
