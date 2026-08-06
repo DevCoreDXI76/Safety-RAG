@@ -56,8 +56,9 @@ def build_stats_message():
         lines.append("(아직 생성 이력 없음)")
     else:
         for uid, data in sorted(per_user.items(), key=lambda kv: -kv[1]["count"]):
-            username = allowed_users.get(uid, {}).get("username")
-            label = f"{username} (id: {uid})" if username else f"id: {uid}"
+            record = allowed_users.get(uid, {})
+            name = record.get("display_name") or record.get("username") or record.get("first_name")
+            label = f"{name} (id: {uid})" if name else f"id: {uid}"
             doc_summary = ", ".join(f"{k} {v}건" for k, v in data["doc_types"].items())
             lines.append(f"- {label}: {data['count']}건 (${data['cost']:.2f}) — {doc_summary}")
 
@@ -73,11 +74,20 @@ def build_authlog_message(limit=20):
     with open(AUTH_FAILURE_LOG_PATH, "r", encoding="utf-8") as f:
         entries = [json.loads(line) for line in f if line.strip()]
 
+    allowed_users = get_allowed_users()
     recent = entries[-limit:]
     lines = [f"🔒 인증 실패 로그 (최근 {len(recent)}건, 전체 {len(entries)}건)"]
     for e in reversed(recent):
         reason_label = AUTH_FAILURE_REASON_LABELS.get(e["reason"], e["reason"])
-        who = e.get("username") or f"id: {e.get('user_id')}"
+        raw_uid = e.get("user_id")
+        record = allowed_users.get(str(raw_uid), {})
+        who = (
+            record.get("display_name")
+            or record.get("username")
+            or record.get("first_name")
+            or e.get("username")
+            or f"id: {raw_uid}"
+        )
         lines.append(f"- {e['timestamp']} | {who} | {reason_label}")
 
     return "\n".join(lines)
