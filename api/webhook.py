@@ -58,7 +58,7 @@ def _handle_message(message):
     user = message["from"]
     user_id = user["id"]
 
-    if is_awaiting_name(user_id):
+    if is_awaiting_name(user_id) and user_id != ADMIN_TELEGRAM_USER_ID and not feedback_survey.is_awaiting_free_text(user_id):
         stripped = text.strip() if text else ""
         if is_valid_name_reply(stripped):
             record_name_reply(user_id, stripped)

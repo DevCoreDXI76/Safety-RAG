@@ -284,6 +284,18 @@ def handle_free_text(user_id, chat_id, text):
     return False
 
 
+def is_awaiting_free_text(user_id):
+    """이 user_id가 지금 어떤 체크포인트에서든 자유의견을 기다리는 중인지
+    순수 조회한다. 텍스트 우선순위 판단용(webhook.py) — 실패해도 예외를
+    삼키고 False를 반환해 안전한 기본값(자유의견 대기 아님)으로 처리한다."""
+    try:
+        state = _load_state().get(str(user_id), {})
+        return any(cp.get("awaiting_free_text") for cp in state.values())
+    except Exception:
+        logger.exception("자유의견 대기 조회 실패: user_id=%s", user_id)
+        return False
+
+
 def _resend_pending_question(user_id, document_type, checkpoint_state):
     if checkpoint_state.get("awaiting_free_text"):
         send_message(
