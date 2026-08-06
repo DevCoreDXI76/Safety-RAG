@@ -249,8 +249,15 @@ def sweep_stale_name_requests(timeout_minutes=30):
                 requested_at_raw = record.get("name_requested_at")
                 if not requested_at_raw:
                     continue
-                requested_at = datetime.fromisoformat(requested_at_raw)
-                elapsed_minutes = (now - requested_at).total_seconds() / 60
+                try:
+                    requested_at = datetime.fromisoformat(requested_at_raw)
+                    elapsed_minutes = (now - requested_at).total_seconds() / 60
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "이름 미입력 타임아웃 폴백: name_requested_at 파싱 실패 — uid=%s value=%r (건너뜀)",
+                        uid, requested_at_raw,
+                    )
+                    continue
                 if elapsed_minutes >= timeout_minutes:
                     record["admin_notified"] = True
                     to_notify.append((uid, dict(record)))
