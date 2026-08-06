@@ -28,12 +28,14 @@ def run():
         admin_stats.TOKEN_USAGE_LOG_PATH = os.path.join(tmp_dir, "token_usage_log.jsonl")
         admin_stats.AUTH_FAILURE_LOG_PATH = os.path.join(tmp_dir, "auth_failures.jsonl")
         try:
+            # build_stats_message: tier 1, 2, 3, 4 커버
             access_control.add_allowed_user(111, username="hong_gd", first_name="홍길동", display_name="홍길동 대리")
             access_control.add_allowed_user(222, username="kim_cs", first_name=None, display_name=None)
             access_control.add_allowed_user(333, username=None, first_name=None, display_name=None)
+            access_control.add_allowed_user(444, username=None, first_name="최민준", display_name=None)
 
             with open(admin_stats.TOKEN_USAGE_LOG_PATH, "w", encoding="utf-8") as f:
-                for uid in (111, 222, 333):
+                for uid in (111, 222, 333, 444):
                     f.write(json.dumps({
                         "user_id": uid, "document_type": "위험성평가표",
                         "input_tokens": 100, "output_tokens": 50,
@@ -41,24 +43,50 @@ def run():
                     }, ensure_ascii=False) + "\n")
 
             message = admin_stats.build_stats_message()
-            checks.append(("display_name이 있으면 그걸 표시", "홍길동 대리 (id: 111)" in message))
-            checks.append(("display_name 없으면 username 표시", "kim_cs (id: 222)" in message))
-            checks.append(("아무 이름도 없으면 id만 표시", "id: 333" in message))
+            checks.append(("build_stats: tier1 display_name", "홍길동 대리 (id: 111)" in message))
+            checks.append(("build_stats: tier2 username", "kim_cs (id: 222)" in message))
+            checks.append(("build_stats: tier4 id fallback", "id: 333" in message))
+            checks.append(("build_stats: tier3 first_name", "최민준 (id: 444)" in message))
+
+            # build_authlog_message: tier 1, 2, 3, 4, 5 커버
+            # tier 2: username만 있음
+            access_control.add_allowed_user(555, username="park_jy", first_name=None, display_name=None)
+            # tier 3: first_name만 있음
+            access_control.add_allowed_user(666, username=None, first_name="이순신", display_name=None)
 
             with open(admin_stats.AUTH_FAILURE_LOG_PATH, "w", encoding="utf-8") as f:
+                # tier 1: display_name (from allowed_users)
                 f.write(json.dumps({
                     "timestamp": "2026-08-06T21:00:00+09:00", "reason": "not_allowed",
                     "user_id": 111, "username": None,
                 }, ensure_ascii=False) + "\n")
+                # tier 2: username from allowed_users record
+                f.write(json.dumps({
+                    "timestamp": "2026-08-06T21:02:00+09:00", "reason": "not_allowed",
+                    "user_id": 555, "username": None,
+                }, ensure_ascii=False) + "\n")
+                # tier 3: first_name from allowed_users record
+                f.write(json.dumps({
+                    "timestamp": "2026-08-06T21:03:00+09:00", "reason": "not_allowed",
+                    "user_id": 666, "username": None,
+                }, ensure_ascii=False) + "\n")
+                # tier 4: username from log entry itself (user_id not in allowed_users)
+                f.write(json.dumps({
+                    "timestamp": "2026-08-06T21:04:00+09:00", "reason": "invalid_signature",
+                    "user_id": "unverified:777", "username": "fallback_handle",
+                }, ensure_ascii=False) + "\n")
+                # tier 5: id fallback (user_id not in allowed_users, no username in log)
                 f.write(json.dumps({
                     "timestamp": "2026-08-06T21:05:00+09:00", "reason": "invalid_signature",
                     "user_id": "unverified:999", "username": None,
                 }, ensure_ascii=False) + "\n")
 
             authlog_message = admin_stats.build_authlog_message()
-            checks.append(("authlog도 display_name 우선 표시", "홍길동 대리" in authlog_message))
-            checks.append(("승인 목록에 없는 user_id는 id로 표시",
-                            "id: unverified:999" in authlog_message))
+            checks.append(("authlog: tier1 display_name", "홍길동 대리" in authlog_message))
+            checks.append(("authlog: tier2 username from allowed_users", "park_jy" in authlog_message))
+            checks.append(("authlog: tier3 first_name from allowed_users", "이순신" in authlog_message))
+            checks.append(("authlog: tier4 username from log entry", "fallback_handle" in authlog_message))
+            checks.append(("authlog: tier5 id fallback", "id: unverified:999" in authlog_message))
         finally:
             access_control.ALLOWED_USERS_FILE = original_allowed
             admin_stats.TOKEN_USAGE_LOG_PATH = original_token_log
