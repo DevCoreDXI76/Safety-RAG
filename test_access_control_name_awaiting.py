@@ -31,6 +31,9 @@ def run():
                     access_control.is_valid_name_reply("표 순서가 헷갈려요, 좁아요") is False))
     checks.append(("물음표 포함이면 거부", access_control.is_valid_name_reply("이게 맞나요?") is False))
     checks.append(("마침표 포함이면 거부", access_control.is_valid_name_reply("홍길동.") is False))
+    checks.append(("전각 쉼표 포함이면 거부", access_control.is_valid_name_reply("표 순서가 헷갈려요，좁아요") is False))
+    checks.append(("전각 물음표 포함이면 거부", access_control.is_valid_name_reply("이게 맞나요？") is False))
+    checks.append(("전각 마침표 포함이면 거부", access_control.is_valid_name_reply("홍길동。") is False))
 
     # --- is_awaiting_name: pending/allowed 두 경로 ---
     original_allowed = access_control.ALLOWED_USERS_FILE
