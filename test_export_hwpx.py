@@ -122,11 +122,10 @@ SAMPLE_RECORD_RISK_REAL_SPEC = {
     ),
 }
 
-# 2026-08-05 3차 실기기 피드백: 위험성평가표처럼 헤더가 여러 줄로 줄바꿈되는
-# 넓은 표는 header+데이터1행조차 남은 페이지 공간에 안 들어가면 표 전체가
-# 다음 페이지로 밀려나 앞 페이지에 큰 빈 공간이 생긴다(repeatHeader="1"는
-# 이미 있었지만 표 자체가 안 쪼개짐). 행 수가 많은 표는 일정 행 수마다
-# 물리적으로 여러 개의 표로 나누고, 나뉜 표마다 헤더 행을 복사해 넣는다.
+# 2026-08-06 요청: 표 강제 분할(_TABLE_CHUNK_ROWS)을 도입했던 원인(페이지1에
+# 큰 빈 공간)이 알고 보니 데스크톱 "혼글뷰어"만의 렌더링 문제였음(모바일 앱
+# 2종에서는 정상 확인) — 강제 분할은 오히려 헤더가 불필요하게 자주 반복돼
+# 보기 나쁘므로 제거. 행이 많아도 표는 항상 물리적으로 1개여야 한다.
 SAMPLE_RECORD_RISK_MANY_ROWS = {
     "document_type": "위험성평가표",
     "draft": (
@@ -324,42 +323,18 @@ def run():
         tbm_section_xml = zf.read("Contents/section0.xml").decode("utf-8", errors="ignore")
     checks.append(("TBM 일지는 세로형(PORTRAIT)으로 전환됨", 'landscape="PORTRAIT"' in tbm_section_xml))
 
-    # --- 행 수 많은 표는 물리적으로 분할 + 헤더 복사 검증 ---
-    from export_hwpx import _TABLE_CHUNK_ROWS
+    # --- 표 강제 분할 없음 검증(2026-08-06 제거 요청) ---
+    # 행이 많은 표라도 항상 물리적으로 표 1개여야 하고, 데이터도 그대로
+    # 보존돼야 한다. repeatHeader="1"만으로 페이지네이션은 뷰어에 맡긴다.
     hwpx_bytes_many = record_to_hwpx_bytes(SAMPLE_RECORD_RISK_MANY_ROWS)
     doc_many = HwpxDocument.open(hwpx_bytes_many)
-    table_map_many = doc_many.get_table_map()
-    data_row_count = 5
-    expected_chunks = -(-data_row_count // _TABLE_CHUNK_ROWS)  # ceil division
     checks.append((
-        f"데이터 {data_row_count}행짜리 표가 물리적으로 {expected_chunks}개로 분할됨",
-        len(table_map_many["tables"]) == expected_chunks,
-    ))
-    with zipfile.ZipFile(io.BytesIO(hwpx_bytes_many)) as zf:
-        section_many_xml = zf.read("Contents/section0.xml").decode("utf-8", errors="ignore")
-    checks.append((
-        "분할된 표 각각에 헤더 행(단위작업)이 복사되어 있음",
-        section_many_xml.count("단위작업") == expected_chunks,
+        "데이터 5행짜리 표도 강제로 분할되지 않고 물리적으로 표 1개",
+        len(doc_many.get_table_map()["tables"]) == 1,
     ))
     checks.append((
-        "분할된 표에도 원본 데이터가 누락 없이 전부 보존됨",
+        "표가 하나여도 데이터는 전부 보존됨",
         all(f"작업{i}" in doc_many.export_text() for i in range(1, 6)),
-    ))
-
-    # kv표("기본 정보"류 항목/내용 2열)는 셀 내용이 짧아 분할 문제가 재현되지
-    # 않으므로, 행이 많아도 나누지 않아야 한다(그대로 나누면 원래 한 페이지에
-    # 넉넉히 들어가던 짧은 표까지 불필요하게 여러 박스로 쪼개짐).
-    kv_many_record = {
-        "document_type": "위험성평가표",
-        "draft": (
-            "| 항목 | 내용 |\n|------|------|\n"
-            "| a | 1 |\n| b | 2 |\n| c | 3 |\n| d | 4 |\n| e | 5 |\n| f | 6 |\n"
-        ),
-    }
-    doc_kv_many = HwpxDocument.open(record_to_hwpx_bytes(kv_many_record))
-    checks.append((
-        "kv표는 데이터 행이 많아도(6행) 분할되지 않음",
-        len(doc_kv_many.get_table_map()["tables"]) == 1,
     ))
 
     print()

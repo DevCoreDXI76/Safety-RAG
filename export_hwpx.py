@@ -70,12 +70,6 @@ _EQUAL_WIDTH_HEADING_KEYWORDS = ("참석자", "서명", "참여 확인", "결재
 _MIN_COL_WIDTH_UNITS = round(12 * _HWP_UNITS_PER_MM)
 _CELL_H_PADDING_UNITS = round(3 * _HWP_UNITS_PER_MM)
 
-# 데이터 행이 이보다 많은 표는 이 행 수 단위로 물리적으로 나눠, 나뉜 표마다
-# 헤더 행을 복사해 넣는다(위 pageBreak/repeatHeader 설명 참고). 3행은 위험성
-# 평가표처럼 헤더가 여러 줄로 줄바꿈되는 넓은 표에서도 "헤더+3행" 단위가
-# 웬만한 남은 페이지 공간에 들어갈 만큼 작다는 보수적인 추정값 — 실기기
-# 재확인 결과에 따라 조정 필요.
-_TABLE_CHUNK_ROWS = 3
 _FULLWIDTH_CHAR_EM_RATIO = 1.0
 _HALFWIDTH_CHAR_EM_RATIO = 0.55
 
@@ -240,65 +234,50 @@ def record_to_hwpx_bytes(record):
         else:
             weights = resolve_column_weights(style, cols)
 
-        # 2026-08-05 3차 실기기 피드백: repeatHeader="1"만으로는 렌더러가
-        # "헤더+데이터 1행"조차 남은 페이지 공간에 못 넣으면 표 전체를 다음
-        # 페이지로 밀어버려 앞 페이지에 큰 빈 공간이 생긴다(위험성평가표처럼
-        # 헤더가 여러 줄로 줄바꿈되는 넓은 표에서 재현됨). 행 수가 많으면
-        # _TABLE_CHUNK_ROWS개씩 물리적으로 별도의 표로 나누고, 나뉜 표마다
-        # 헤더 행을 그대로 복사해 넣는다 — 렌더러의 자동 페이지네이션에
-        # 기대지 않고 항상 작게 쪼개진 표만 배치되게 한다. kv표("기본 정보"
-        # 등 항목/내용 2열)는 셀 내용이 짧아 애초에 이 문제가 재현되지 않으니
-        # 나누지 않는다 — 그대로 나누면 "기본 정보"처럼 원래 한 페이지에
-        # 넉넉히 들어가던 짧은 표까지 불필요하게 여러 박스로 쪼개진다.
-        header_row = table[0]
-        data_rows = table[1:]
-        chunk_size = _TABLE_CHUNK_ROWS if not is_kv_table else max(len(data_rows), 1)
-        chunks = [
-            data_rows[i:i + chunk_size] for i in range(0, len(data_rows), chunk_size)
-        ] or [[]]
+        # width를 지정해야 열 너비가 usable_width 안에서 균등 분배된다
+        # (_distribute_size) — 미지정 시 열 개수와 무관하게 고정폭이 쓰인다.
+        hwpx_table = doc.add_table(len(table), cols, width=usable_width)
+        hwpx_table.set_column_widths(weights)
+        # 표가 페이지 경계를 넘어갈 때 헤더 행(0번째 행)이 다음 페이지에도
+        # 반복되도록 한다(뷰어의 자동 페이지네이션에 맡긴다 — 2026-08-05에
+        # 시도했던 강제 물리 분할은 데스크톱 "혼글뷰어" 렌더링 문제로 밝혀진
+        # 것을 이 기능으로 "고치려다" 헤더가 불필요하게 자주 반복되는 부작용만
+        # 남겨 2026-08-06 제거함).
+        hwpx_table.element.set("repeatHeader", "1")
 
         ai_value_present = False
-        for chunk in chunks:
-            chunk_table = [header_row] + chunk
-            hwpx_table = doc.add_table(len(chunk_table), cols, width=usable_width)
-            hwpx_table.set_column_widths(weights)
-            # 표가 페이지 경계를 넘어갈 때 헤더 행(0번째 행)이 다음 페이지에도
-            # 반복되도록 한다(청크 안에서 더 나뉘는 경우의 안전망 — 위 청크
-            # 분할이 주된 대응책).
-            hwpx_table.element.set("repeatHeader", "1")
+        for row_index, row_cells in enumerate(table):
+            is_header_row = row_index == 0
+            for col_index in range(cols):
+                raw = row_cells[col_index] if col_index < len(row_cells) else ""
+                value, note = parse_ai_score_cell(raw)
+                text = str(value) if value is not None else raw
+                if note:
+                    ai_value_present = True
 
-            for row_index, row_cells in enumerate(chunk_table):
-                is_header_row = row_index == 0
-                for col_index in range(cols):
-                    raw = row_cells[col_index] if col_index < len(row_cells) else ""
-                    value, note = parse_ai_score_cell(raw)
-                    text = str(value) if value is not None else raw
-                    if note:
-                        ai_value_present = True
+                center, fill_hex = cell_style_decision(
+                    style, headers_base, risk_cols, is_kv_table, is_header_row, col_index, text
+                )
+                if not fill_hex and not is_header_row and not is_kv_table and col_index not in risk_cols:
+                    # "위험성 추정 행렬" 참고표처럼 헤더명이 "위험등급"이 아니라
+                    # risk_grade_column_indices로는 안 잡히지만, 셀 값 자체가
+                    # 등급 문자(A/B/C)인 표도 본문과 같은 색으로 칠한다
+                    # (PDF 6c8cb5a/XLSX 63590a2와 동일).
+                    grade = text.strip().upper()
+                    if grade in style.risk_grade_colors:
+                        fill_hex = style.risk_grade_colors[grade]
+                        center = True
 
-                    center, fill_hex = cell_style_decision(
-                        style, headers_base, risk_cols, is_kv_table, is_header_row, col_index, text
-                    )
-                    if not fill_hex and not is_header_row and not is_kv_table and col_index not in risk_cols:
-                        # "위험성 추정 행렬" 참고표처럼 헤더명이 "위험등급"이 아니라
-                        # risk_grade_column_indices로는 안 잡히지만, 셀 값 자체가
-                        # 등급 문자(A/B/C)인 표도 본문과 같은 색으로 칠한다
-                        # (PDF 6c8cb5a/XLSX 63590a2와 동일).
-                        grade = text.strip().upper()
-                        if grade in style.risk_grade_colors:
-                            fill_hex = style.risk_grade_colors[grade]
-                            center = True
-
-                    cell = hwpx_table.cell(row_index, col_index)
-                    p = cell.paragraphs[0]
-                    p.clear_text()
-                    # center든 아니든 항상 명시적으로 지정해야 한다 — 그렇지
-                    # 않으면 문서 기본 문단속성(JUSTIFY)을 물려받아 XLSX/PDF의
-                    # 왼쪽정렬과 어긋난다.
-                    p.para_pr_id_ref = center_para_id if center else left_para_id
-                    _add_styled_text(p, text, bold=is_header_row, size=_BODY_SIZE)
-                    if fill_hex:
-                        hwpx_table.set_cell_shading(row_index, col_index, fill_hex)
+                cell = hwpx_table.cell(row_index, col_index)
+                p = cell.paragraphs[0]
+                p.clear_text()
+                # center든 아니든 항상 명시적으로 지정해야 한다 — 그렇지
+                # 않으면 문서 기본 문단속성(JUSTIFY)을 물려받아 XLSX/PDF의
+                # 왼쪽정렬과 어긋난다.
+                p.para_pr_id_ref = center_para_id if center else left_para_id
+                _add_styled_text(p, text, bold=is_header_row, size=_BODY_SIZE)
+                if fill_hex:
+                    hwpx_table.set_cell_shading(row_index, col_index, fill_hex)
 
         doc.add_paragraph("")
         if ai_value_present:
