@@ -7,6 +7,10 @@ from api.access_control import (
     ADMIN_TELEGRAM_USER_ID,
     is_allowed,
     is_pending,
+    is_awaiting_name,
+    is_valid_name_reply,
+    record_name_reply,
+    sweep_stale_name_requests,
     register_pending_request,
     add_allowed_user,
     remove_pending_request,
@@ -34,6 +38,10 @@ async def telegram_webhook(
     if x_telegram_bot_api_secret_token != TELEGRAM_WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="invalid secret token")
 
+    # 별도 스케줄러 없이, 웹훅 이벤트가 들어올 때마다 이름 미입력 타임아웃을
+    # 가볍게 확인한다 — pending 목록이 비어 있으면 즉시 반환한다.
+    sweep_stale_name_requests()
+
     update = await request.json()
 
     if "message" in update:
@@ -49,6 +57,15 @@ def _handle_message(message):
     chat_id = message["chat"]["id"]
     user = message["from"]
     user_id = user["id"]
+
+    if is_awaiting_name(user_id):
+        stripped = text.strip() if text else ""
+        if is_valid_name_reply(stripped):
+            record_name_reply(user_id, stripped)
+            send_message(chat_id, f"감사합니다, {stripped}님으로 등록했습니다 🙌")
+        else:
+            send_message(chat_id, "이름만 간단히 입력해주세요 (예: 홍길동)")
+        return
 
     if text == "/stats":
         if user_id != ADMIN_TELEGRAM_USER_ID:
@@ -133,7 +150,8 @@ def _handle_callback_query(callback_query):
         pending = get_pending_request(user_id)
         username = pending.get("username") if pending else None
         first_name = pending.get("first_name") if pending else None
-        add_allowed_user(user_id, username=username, first_name=first_name)
+        display_name = pending.get("display_name") if pending else None
+        add_allowed_user(user_id, username=username, first_name=first_name, display_name=display_name)
         remove_pending_request(user_id)
         edit_message_text(message["chat"]["id"], message["message_id"], f"✅ 승인 완료 (id: {user_id})")
         send_message(user_id, "✅ 승인되었습니다! 메뉴 버튼으로 미니앱을 사용하실 수 있습니다.")
