@@ -193,3 +193,101 @@ def is_awaiting_name(user_id):
         return True
 
     return False
+
+
+def record_name_reply(user_id, text):
+    """is_awaiting_name(user_id)가 True일 때 호출한다고 가정하고 text를
+    이름으로 저장한다. pending(신규 신청) 쪽이면 관리자에게 아직 알림을
+    보낸 적이 없을 때만 "새 사용 신청" 알림을 이름과 함께 보낸다(최초 1회).
+    allowed(기존 승인자 소급) 쪽이면 이름만 저장하고 알림은 없다."""
+    pending = get_pending_request(user_id)
+    if pending is not None and not pending.get("display_name"):
+        should_notify_admin = False
+        with _lock:
+            data = _load(PENDING_REQUESTS_FILE)
+            record = data.get(str(user_id))
+            if record is None:
+                return
+            record["display_name"] = text
+            should_notify_admin = not record.get("admin_notified", False)
+            record["admin_notified"] = True
+            _save(PENDING_REQUESTS_FILE, data)
+        if should_notify_admin and ADMIN_TELEGRAM_USER_ID:
+            telegram_label = pending.get("username") or pending.get("first_name") or str(user_id)
+            send_message(
+                ADMIN_TELEGRAM_USER_ID,
+                f"📩 새 사용 신청: {text} (텔레그램: {telegram_label}, id: {user_id})",
+                reply_markup=approve_reject_keyboard(user_id),
+            )
+        return
+
+    with _lock:
+        data = _load(ALLOWED_USERS_FILE)
+        record = data.get(str(user_id))
+        if record is None:
+            return
+        record["display_name"] = text
+        _save(ALLOWED_USERS_FILE, data)
+
+
+def sweep_stale_name_requests(timeout_minutes=30):
+    """pending_requests.json을 훑어 admin_notified가 False이고
+    name_requested_at으로부터 timeout_minutes 이상 지난 항목을 찾아
+    "(이름 미입력)"으로 관리자 알림을 보내고 admin_notified=True로 표시한다.
+    별도 스케줄러 없이 웹훅 이벤트가 들어올 때마다 가볍게 호출된다 —
+    pending 목록이 비어 있으면 즉시 반환하므로 비용은 무시할 수준이다.
+    실패해도 예외를 삼켜 웹훅 처리 자체를 막지 않는다."""
+    try:
+        now = datetime.now(KST)
+        to_notify = []
+        with _lock:
+            data = _load(PENDING_REQUESTS_FILE)
+            changed = False
+            for uid, record in data.items():
+                if record.get("admin_notified"):
+                    continue
+                requested_at_raw = record.get("name_requested_at")
+                if not requested_at_raw:
+                    continue
+                requested_at = datetime.fromisoformat(requested_at_raw)
+                elapsed_minutes = (now - requested_at).total_seconds() / 60
+                if elapsed_minutes >= timeout_minutes:
+                    record["admin_notified"] = True
+                    to_notify.append((uid, dict(record)))
+                    changed = True
+            if changed:
+                _save(PENDING_REQUESTS_FILE, data)
+        if not ADMIN_TELEGRAM_USER_ID:
+            return
+        for uid, record in to_notify:
+            telegram_label = record.get("username") or record.get("first_name") or uid
+            send_message(
+                ADMIN_TELEGRAM_USER_ID,
+                f"📩 새 사용 신청: (이름 미입력) (텔레그램: {telegram_label}, id: {uid})",
+                reply_markup=approve_reject_keyboard(uid),
+            )
+    except Exception:
+        logger.exception("이름 미입력 타임아웃 폴백 처리 실패")
+
+
+def maybe_ask_backfill_name(user_id):
+    """allowed_users.json에서 user_id를 조회해 display_name이 비어 있고
+    아직 물어본 적도 없을 때(name_asked_at 없음)만 이름 요청 메시지를
+    보내고 name_asked_at을 채운다. require_telegram_auth()의 모든 호출
+    경로에서 실행되므로 예외를 삼키고 실패해도 API 응답에 영향을 주지
+    않는다(error_alert.py와 동일 원칙)."""
+    try:
+        with _lock:
+            data = _load(ALLOWED_USERS_FILE)
+            record = data.get(str(user_id))
+            if record is None or record.get("display_name") or record.get("name_asked_at"):
+                return
+            record["name_asked_at"] = datetime.now(KST).isoformat()
+            _save(ALLOWED_USERS_FILE, data)
+        send_message(
+            user_id,
+            "안녕하세요! 베타 테스트에 참여해주셔서 감사합니다 🙏\n"
+            "피드백 정리를 위해 성함을 답장으로 알려주시겠어요? (예: 홍길동)",
+        )
+    except Exception:
+        logger.exception("기존 승인자 이름 소급 요청 실패: user_id=%s", user_id)
