@@ -11,12 +11,20 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import DATA_DIR, TOKEN_USAGE_LOG_PATH, KST
 from api.telegram_bot import send_message
 from api.access_control import ADMIN_TELEGRAM_USER_ID
+from generate_draft import MODEL_BY_DOCUMENT_TYPE, DEFAULT_MODEL
 
-# Sonnet 5 도입가(~2026-08-31 기준), 100만 토큰당 USD. 표준가($3/$15) 전환이나
-# 문서유형별 Haiku 다운그레이드 적용 시 갱신 필요 — 지금은 전 문서유형이
-# Sonnet 5라 이 상수만으로 정확하다.
+# Sonnet 5 도입가(~2026-08-31 기준), 100만 토큰당 USD. 표준가($3/$15) 전환
+# 시 갱신 필요.
 SONNET5_INPUT_PRICE_PER_MTOK = 2.0
 SONNET5_OUTPUT_PRICE_PER_MTOK = 10.0
+
+# Haiku 4.5 단가(변동 계획 없음), 100만 토큰당 USD. generate_draft.py의
+# MODEL_BY_DOCUMENT_TYPE에서 Haiku로 라우팅된 문서유형(현재 안전보건교육일지)에
+# 적용한다 — 2026-08-07 실측원가 집계 중, 이 구분 없이 전 항목에 Sonnet
+# 단가를 적용해 Haiku 항목의 원가를 과대 계상하고 있던 버그를 발견해 수정.
+HAIKU_INPUT_PRICE_PER_MTOK = 1.0
+HAIKU_OUTPUT_PRICE_PER_MTOK = 5.0
+
 CACHE_WRITE_MULTIPLIER = 2.0  # 1시간 TTL 기준
 CACHE_READ_MULTIPLIER = 0.1
 
@@ -33,15 +41,28 @@ def _today_kst():
 
 
 def _entry_cost_usd(entry):
-    input_cost = entry["input_tokens"] / 1_000_000 * SONNET5_INPUT_PRICE_PER_MTOK
-    output_cost = entry["output_tokens"] / 1_000_000 * SONNET5_OUTPUT_PRICE_PER_MTOK
+    """entry["document_type"]가 MODEL_BY_DOCUMENT_TYPE에서 Haiku로 매핑돼
+    있으면 Haiku 단가로, 그 외(매핑 없음 · document_type 키 자체가 없는
+    구버전 로그 포함)에는 DEFAULT_MODEL(Sonnet 5) 단가로 계산한다 —
+    generate_draft.py의 실제 배포 라우팅과 항상 일치시키기 위해 상수를
+    복제하지 않고 그 모듈에서 직접 가져와 참조한다."""
+    model = MODEL_BY_DOCUMENT_TYPE.get(entry.get("document_type"), DEFAULT_MODEL)
+    if model.startswith("claude-haiku"):
+        input_price = HAIKU_INPUT_PRICE_PER_MTOK
+        output_price = HAIKU_OUTPUT_PRICE_PER_MTOK
+    else:
+        input_price = SONNET5_INPUT_PRICE_PER_MTOK
+        output_price = SONNET5_OUTPUT_PRICE_PER_MTOK
+
+    input_cost = entry["input_tokens"] / 1_000_000 * input_price
+    output_cost = entry["output_tokens"] / 1_000_000 * output_price
     cache_write_cost = (
         entry["cache_creation_input_tokens"] / 1_000_000
-        * SONNET5_INPUT_PRICE_PER_MTOK * CACHE_WRITE_MULTIPLIER
+        * input_price * CACHE_WRITE_MULTIPLIER
     )
     cache_read_cost = (
         entry["cache_read_input_tokens"] / 1_000_000
-        * SONNET5_INPUT_PRICE_PER_MTOK * CACHE_READ_MULTIPLIER
+        * input_price * CACHE_READ_MULTIPLIER
     )
     return input_cost + output_cost + cache_write_cost + cache_read_cost
 
