@@ -92,7 +92,12 @@ def _handle_message(message):
         send_message(chat_id, "미응답 테스터에게 피드백 질문을 재발송했습니다.")
         return
 
-    if text != "/start":
+    # "/start" 뒤에 딥링크 파라미터(예: "/start beta1")가 붙어도 인식하도록
+    # 명령어와 파라미터를 분리해서 비교한다.
+    command, _, start_param = text.partition(" ")
+    source = start_param.strip() or None
+
+    if command != "/start":
         if text and feedback_survey.handle_free_text(user_id, chat_id, text):
             return
         return
@@ -105,7 +110,7 @@ def _handle_message(message):
         send_message(chat_id, "사용 신청이 이미 접수되어 승인 대기 중입니다.")
         return
 
-    register_pending_request(user_id, username=user.get("username"), first_name=user.get("first_name"))
+    register_pending_request(user_id, username=user.get("username"), first_name=user.get("first_name"), source=source)
 
 
 def _handle_revoke_command(chat_id, text):
@@ -151,7 +156,8 @@ def _handle_callback_query(callback_query):
         username = pending.get("username") if pending else None
         first_name = pending.get("first_name") if pending else None
         display_name = pending.get("display_name") if pending else None
-        add_allowed_user(user_id, username=username, first_name=first_name, display_name=display_name)
+        source = pending.get("source") if pending else None
+        add_allowed_user(user_id, username=username, first_name=first_name, display_name=display_name, source=source)
         remove_pending_request(user_id)
         edit_message_text(message["chat"]["id"], message["message_id"], f"✅ 승인 완료 (id: {user_id})")
         send_message(user_id, "✅ 승인되었습니다! 메뉴 버튼으로 미니앱을 사용하실 수 있습니다.")

@@ -44,7 +44,7 @@ def is_allowed(user_id):
     return str(user_id) in data
 
 
-def add_allowed_user(user_id, username=None, first_name=None, display_name=None):
+def add_allowed_user(user_id, username=None, first_name=None, display_name=None, source=None):
     with _lock:
         data = _load(ALLOWED_USERS_FILE)
         data[str(user_id)] = {
@@ -52,6 +52,7 @@ def add_allowed_user(user_id, username=None, first_name=None, display_name=None)
             "first_name": first_name,
             "display_name": display_name,
             "name_asked_at": None,
+            "source": source,
         }
         _save(ALLOWED_USERS_FILE, data)
 
@@ -117,7 +118,7 @@ def get_pending_request(user_id):
     return data.get(str(user_id))
 
 
-def add_pending_request(user_id, username=None, first_name=None):
+def add_pending_request(user_id, username=None, first_name=None, source=None):
     with _lock:
         data = _load(PENDING_REQUESTS_FILE)
         data[str(user_id)] = {
@@ -126,16 +127,20 @@ def add_pending_request(user_id, username=None, first_name=None):
             "display_name": None,
             "name_requested_at": datetime.now(KST).isoformat(),
             "admin_notified": False,
+            "source": source,
         }
         _save(PENDING_REQUESTS_FILE, data)
 
 
-def register_pending_request(user_id, username=None, first_name=None):
+def register_pending_request(user_id, username=None, first_name=None, source=None):
     """
     대기 등록 + 이름 요청 메시지를 보내는 공용 진입점. "/start" 텍스트
     메시지(webhook.py)와 미니앱 첫 API 호출(telegram_auth.py) 양쪽에서
     동일하게 호출한다. 이미 승인됐거나 이미 대기 중이면 아무 것도 하지
     않고 False를 반환한다.
+
+    source는 "/start <param>" 딥링크 파라미터(예: "beta1") — 유입 경로
+    구분용. 파라미터 없이 들어오면 None.
 
     관리자 알림은 여기서 보내지 않는다(2026-08 변경) — 이름 답장이
     도착했을 때 record_name_reply()가, 또는 타임아웃이 지나면
@@ -144,7 +149,7 @@ def register_pending_request(user_id, username=None, first_name=None):
     if is_allowed(user_id) or is_pending(user_id):
         return False
 
-    add_pending_request(user_id, username=username, first_name=first_name)
+    add_pending_request(user_id, username=username, first_name=first_name, source=source)
     send_message(
         user_id,
         "사용 신청이 접수되었습니다 🙌\n"
